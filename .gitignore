@@ -7,3 +7,6 @@ polo-bootstrap.log
 # build output
 dist/
 node_modules/
+
+ralph-pty-attachment.log
+polo-pty-attachment.log

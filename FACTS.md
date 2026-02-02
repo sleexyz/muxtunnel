@@ -25,3 +25,18 @@ Codebase-specific truths about MuxTunnel.
 - `Stop` hook fires when Claude finishes responding
 - Hooks receive JSON on stdin with session_id, transcript_path, message
 - Session transcripts at `~/.claude/projects/.../session.jsonl`
+
+## capture-pane-limitations
+**Why capture-pane causes rendering issues**
+- capture-pane captures already-rendered content at whatever dimensions it was written
+- Terminal scrollback doesn't reflow when pane is resized
+- If content was rendered at 200 cols and viewer is 150 cols, content overflows
+- This is a fundamental terminal limitation, not a bug
+
+## pty-attachment
+**The correct approach for web terminal viewers**
+- webmux (downloads/webmux) uses PTY attachment via portable_pty
+- Create PTY with viewer's dimensions → run `tmux attach-session -t TARGET`
+- tmux sees a real terminal client → resizes session → formats output correctly
+- Bidirectional: PTY output streams to WebSocket, input forwards to PTY stdin
+- This is how proper web terminals (ttyd, gotty, wetty) work

@@ -174,7 +174,7 @@ function initTerminal() {
 }
 
 /**
- * Connect to a pane via WebSocket
+ * Connect to a pane via WebSocket with PTY attachment
  */
 function connectToPane(target: string) {
   // Close existing connection
@@ -183,47 +183,49 @@ function connectToPane(target: string) {
     ws = null;
   }
 
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(target)}`;
+  // Get terminal dimensions for PTY creation
+  let cols = 80;
+  let rows = 24;
+  if (terminal && fitAddon) {
+    fitAddon.fit();
+    cols = terminal.cols;
+    rows = terminal.rows;
+  }
 
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(target)}&cols=${cols}&rows=${rows}`;
+
+  // Use binary type for efficient PTY data transfer
   ws = new WebSocket(wsUrl);
+  ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
-    console.log(`Connected to pane: ${target}`);
-
-    // Send initial size
-    if (terminal) {
-      ws!.send(JSON.stringify({
-        type: "resize",
-        cols: terminal.cols,
-        rows: terminal.rows,
-      }));
-    }
+    console.log(`Connected to pane: ${target} (${cols}x${rows})`);
+    terminalHeader.textContent = target;
   };
 
   ws.onmessage = (event) => {
+    // Handle binary PTY data
+    if (event.data instanceof ArrayBuffer) {
+      if (terminal) {
+        const data = new Uint8Array(event.data);
+        terminal.write(data);
+      }
+      return;
+    }
+
+    // Handle JSON control messages
     try {
       const data = JSON.parse(event.data);
-
-      if (data.type === "content" && terminal) {
-        // Clear and write new content
-        terminal.reset();
-        terminal.write(data.content);
-
-        // Update attention indicator in header
-        if (data.needsAttention) {
-          terminalHeader.innerHTML = `<span style="color: #f48771;">⚠️ Needs attention</span> — ${escapeHtml(target)}`;
-        } else {
-          terminalHeader.textContent = target;
-        }
-      }
 
       if (data.type === "pane-info") {
         console.log("Pane info:", data.pane);
       }
     } catch {
-      // Raw data - shouldn't happen with our protocol
-      console.warn("Received non-JSON message:", event.data);
+      // If not JSON and not binary, try writing as text
+      if (terminal && typeof event.data === "string") {
+        terminal.write(event.data);
+      }
     }
   };
 
@@ -252,11 +254,12 @@ function selectPane(target: string) {
 
   terminalHeader.textContent = target;
 
-  // Initialize terminal if needed
+  // Initialize terminal if needed, or clear for new connection
   if (!terminal) {
     initTerminal();
   } else {
-    terminal.reset();
+    // Clear terminal for new PTY connection
+    terminal.clear();
   }
 
   // Connect to the pane

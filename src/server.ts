@@ -2,13 +2,13 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { listSessions, capturePane, capturePaneWithEscapes, sendKeys, resizePane, getPaneInfo, isTmuxRunning } from "./tmux.js";
+import { listSessions, capturePane, getPaneInfo, isTmuxRunning } from "./tmux.js";
 import { detectAttention } from "./attention.js";
+import { createPtySession, PtySession } from "./pty.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const HOST = process.env.HOST || "localhost";
 const STATIC_DIR = process.env.STATIC_DIR || path.join(import.meta.dirname, "..", "dist", "client");
-const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || "100", 10);
 
 // MIME types for static file serving
 const MIME_TYPES: Record<string, string> = {
@@ -131,26 +131,24 @@ const server = http.createServer((req, res) => {
 // Create WebSocket server
 const wss = new WebSocketServer({ noServer: true });
 
-// Track active pane connections
-const paneConnections = new Map<string, {
-  ws: WebSocket;
-  pollInterval: NodeJS.Timeout;
-  lastContent: string;
-}>();
+// Track active PTY sessions per WebSocket connection
+const activeSessions = new Map<WebSocket, PtySession>();
 
 // Handle WebSocket connections
 wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   const paneTarget = url.searchParams.get("pane");
+  const cols = parseInt(url.searchParams.get("cols") || "80", 10);
+  const rows = parseInt(url.searchParams.get("rows") || "24", 10);
 
   if (!paneTarget) {
     ws.close(4000, "Missing pane parameter");
     return;
   }
 
-  console.log(`[WS] Client connected for pane: ${paneTarget}`);
+  console.log(`[WS] Client connected for pane: ${paneTarget} (${cols}x${rows})`);
 
-  // Get initial pane info
+  // Get initial pane info to verify it exists
   const paneInfo = getPaneInfo(paneTarget);
   if (!paneInfo) {
     ws.close(4001, "Pane not found");
@@ -163,38 +161,40 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
     pane: paneInfo,
   }));
 
-  let lastContent = "";
+  // Create PTY session attached to the tmux pane
+  let ptySession: PtySession;
+  try {
+    ptySession = createPtySession({
+      target: paneTarget,
+      cols,
+      rows,
+    });
+    activeSessions.set(ws, ptySession);
+    console.log(`[WS] PTY session created for pane: ${paneTarget}`);
+  } catch (err) {
+    console.error(`[WS] Failed to create PTY for pane ${paneTarget}:`, err);
+    ws.close(4002, "Failed to create PTY session");
+    return;
+  }
 
-  // Start polling for pane content
-  const pollInterval = setInterval(() => {
-    if (ws.readyState !== WebSocket.OPEN) {
-      clearInterval(pollInterval);
-      return;
+  // Forward PTY output to WebSocket as binary data
+  ptySession.on("data", (data: Buffer) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      // Send as binary for efficiency - xterm.js handles raw terminal data
+      ws.send(data);
     }
+  });
 
-    try {
-      // Capture with escape codes for xterm.js rendering
-      const content = capturePaneWithEscapes(paneTarget);
-
-      // Only send if content changed
-      if (content !== lastContent) {
-        lastContent = content;
-
-        // Also check attention state
-        const plainContent = capturePane(paneTarget);
-        const attention = detectAttention(plainContent);
-
-        ws.send(JSON.stringify({
-          type: "content",
-          content,
-          needsAttention: attention.needsAttention,
-          attentionReason: attention.reason,
-        }));
-      }
-    } catch (err) {
-      console.error(`[WS] Error capturing pane ${paneTarget}:`, err);
+  ptySession.on("exit", (exitCode, signal) => {
+    console.log(`[WS] PTY exited for pane ${paneTarget} (code: ${exitCode}, signal: ${signal})`);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close(1000, "PTY exited");
     }
-  }, POLL_INTERVAL);
+  });
+
+  ptySession.on("error", (err) => {
+    console.error(`[WS] PTY error for pane ${paneTarget}:`, err);
+  });
 
   // Handle incoming messages (keystrokes and control messages)
   ws.on("message", (data: Buffer) => {
@@ -206,19 +206,14 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
         const parsed = JSON.parse(message);
 
         if (parsed.type === "resize" && typeof parsed.cols === "number" && typeof parsed.rows === "number") {
-          resizePane(paneTarget, parsed.cols, parsed.rows);
+          console.log(`[WS] Resizing PTY for ${paneTarget} to ${parsed.cols}x${parsed.rows}`);
+          ptySession.resize(parsed.cols, parsed.rows);
           return;
         }
 
+        // For keys messages, write directly to PTY
         if (parsed.type === "keys" && typeof parsed.keys === "string") {
-          // Send literal keys (for text input)
-          sendKeys(paneTarget, parsed.keys, true);
-          return;
-        }
-
-        if (parsed.type === "special" && typeof parsed.key === "string") {
-          // Send special keys (Enter, Escape, etc.)
-          sendKeys(paneTarget, parsed.key, false);
+          ptySession.write(parsed.keys);
           return;
         }
       } catch {
@@ -226,19 +221,27 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
       }
     }
 
-    // Raw input - send as literal text
-    sendKeys(paneTarget, message, true);
+    // Raw input - write directly to PTY
+    ptySession.write(message);
   });
 
   // Cleanup on close
   ws.on("close", () => {
     console.log(`[WS] Client disconnected for pane: ${paneTarget}`);
-    clearInterval(pollInterval);
+    const session = activeSessions.get(ws);
+    if (session) {
+      session.close();
+      activeSessions.delete(ws);
+    }
   });
 
   ws.on("error", (err) => {
     console.error(`[WS] Error for pane ${paneTarget}:`, err);
-    clearInterval(pollInterval);
+    const session = activeSessions.get(ws);
+    if (session) {
+      session.close();
+      activeSessions.delete(ws);
+    }
   });
 });
 
