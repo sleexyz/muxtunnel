@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MuxTunnel</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html, body {
+        height: 100%;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        overflow: hidden;
+      }
+      #app {
+        display: flex;
+        height: 100%;
+      }
+      #sidebar {
+        width: 280px;
+        background: #252526;
+        border-right: 1px solid #3c3c3c;
+        overflow-y: auto;
+        padding: 12px;
+      }
+      #sidebar h2 {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        color: #ccc;
+      }
+      .session-group {
+        margin-bottom: 16px;
+      }
+      .session-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: #888;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+      }
+      .pane-item {
+        padding: 8px 10px;
+        cursor: pointer;
+        border-radius: 4px;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .pane-item:hover {
+        background: #2a2d2e;
+      }
+      .pane-item.selected {
+        background: #094771;
+      }
+      .pane-item .pane-id {
+        font-family: 'Menlo', 'Monaco', monospace;
+        font-size: 13px;
+      }
+      .pane-item .attention-badge {
+        background: #f48771;
+        color: #1e1e1e;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 10px;
+      }
+      #terminal-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      #terminal-header {
+        padding: 8px 12px;
+        background: #2d2d2d;
+        border-bottom: 1px solid #3c3c3c;
+        font-size: 13px;
+        color: #888;
+      }
+      #terminal {
+        flex: 1;
+      }
+      .no-selection {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="sidebar">
+        <h2>tmux Sessions</h2>
+        <div id="sessions-list">Loading...</div>
+      </div>
+      <div id="terminal-container">
+        <div id="terminal-header">Select a pane</div>
+        <div id="terminal">
+          <div class="no-selection">Select a pane from the sidebar</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/client.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+# polo
+bashes.log
+BLOCKING.md
+ralph-bootstrap.log
+polo-bootstrap.log
+
+# build output
+dist/
+node_modules/

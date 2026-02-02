@@ -1,0 +1,286 @@
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
+import "@xterm/xterm/css/xterm.css";
+
+interface TmuxPane {
+  sessionName: string;
+  windowIndex: number;
+  windowName: string;
+  paneIndex: number;
+  paneId: string;
+  target: string;
+  active: boolean;
+  cols: number;
+  rows: number;
+  needsAttention?: boolean;
+  attentionReason?: string;
+}
+
+interface TmuxWindow {
+  index: number;
+  name: string;
+  panes: TmuxPane[];
+}
+
+interface TmuxSession {
+  name: string;
+  windows: TmuxWindow[];
+}
+
+let terminal: Terminal | null = null;
+let fitAddon: FitAddon | null = null;
+let ws: WebSocket | null = null;
+let currentPane: string | null = null;
+let sessionsRefreshInterval: number | null = null;
+
+// DOM elements
+const sessionsList = document.getElementById("sessions-list")!;
+const terminalContainer = document.getElementById("terminal")!;
+const terminalHeader = document.getElementById("terminal-header")!;
+
+/**
+ * Fetch sessions from the API
+ */
+async function fetchSessions(): Promise<TmuxSession[]> {
+  try {
+    const res = await fetch("/api/sessions");
+    if (!res.ok) throw new Error("Failed to fetch sessions");
+    return await res.json();
+  } catch (err) {
+    console.error("Failed to fetch sessions:", err);
+    return [];
+  }
+}
+
+/**
+ * Render the sessions list in the sidebar
+ */
+function renderSessionsList(sessions: TmuxSession[]) {
+  if (sessions.length === 0) {
+    sessionsList.innerHTML = `
+      <div style="color: #888; padding: 12px; font-size: 13px;">
+        No tmux sessions found.<br><br>
+        Start tmux and create a session to get started.
+      </div>
+    `;
+    return;
+  }
+
+  let html = "";
+
+  for (const session of sessions) {
+    html += `<div class="session-group">`;
+    html += `<div class="session-name">${escapeHtml(session.name)}</div>`;
+
+    for (const window of session.windows) {
+      for (const pane of window.panes) {
+        const isSelected = pane.target === currentPane;
+        const hasAttention = pane.needsAttention;
+
+        html += `
+          <div class="pane-item ${isSelected ? "selected" : ""}" data-target="${escapeHtml(pane.target)}">
+            <span class="pane-id">${window.index}:${pane.paneIndex}</span>
+            ${hasAttention ? `<span class="attention-badge">!</span>` : ""}
+          </div>
+        `;
+      }
+    }
+
+    html += `</div>`;
+  }
+
+  sessionsList.innerHTML = html;
+
+  // Add click handlers
+  sessionsList.querySelectorAll(".pane-item").forEach((el) => {
+    el.addEventListener("click", () => {
+      const target = el.getAttribute("data-target");
+      if (target && target !== currentPane) {
+        selectPane(target);
+      }
+    });
+  });
+}
+
+/**
+ * Escape HTML entities
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Initialize or reset the terminal
+ */
+function initTerminal() {
+  // Clear existing terminal
+  if (terminal) {
+    terminal.dispose();
+  }
+  terminalContainer.innerHTML = "";
+
+  terminal = new Terminal({
+    cursorBlink: true,
+    fontSize: 14,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    theme: {
+      background: "#1e1e1e",
+      foreground: "#d4d4d4",
+      cursor: "#d4d4d4",
+      selectionBackground: "#264f78",
+    },
+  });
+
+  fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+
+  // Try WebGL addon for better performance
+  try {
+    terminal.loadAddon(new WebglAddon());
+  } catch (e) {
+    console.warn("WebGL not available:", e);
+  }
+
+  terminal.open(terminalContainer);
+  fitAddon.fit();
+
+  // Handle window resize
+  window.addEventListener("resize", () => {
+    if (fitAddon) {
+      fitAddon.fit();
+      // Send resize to server
+      if (ws && ws.readyState === WebSocket.OPEN && terminal) {
+        ws.send(JSON.stringify({
+          type: "resize",
+          cols: terminal.cols,
+          rows: terminal.rows,
+        }));
+      }
+    }
+  });
+
+  // Handle user input
+  terminal.onData((data) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Send as literal keys
+      ws.send(JSON.stringify({ type: "keys", keys: data }));
+    }
+  });
+}
+
+/**
+ * Connect to a pane via WebSocket
+ */
+function connectToPane(target: string) {
+  // Close existing connection
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(target)}`;
+
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    console.log(`Connected to pane: ${target}`);
+
+    // Send initial size
+    if (terminal) {
+      ws!.send(JSON.stringify({
+        type: "resize",
+        cols: terminal.cols,
+        rows: terminal.rows,
+      }));
+    }
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+
+      if (data.type === "content" && terminal) {
+        // Clear and write new content
+        terminal.reset();
+        terminal.write(data.content);
+
+        // Update attention indicator in header
+        if (data.needsAttention) {
+          terminalHeader.innerHTML = `<span style="color: #f48771;">⚠️ Needs attention</span> — ${escapeHtml(target)}`;
+        } else {
+          terminalHeader.textContent = target;
+        }
+      }
+
+      if (data.type === "pane-info") {
+        console.log("Pane info:", data.pane);
+      }
+    } catch {
+      // Raw data - shouldn't happen with our protocol
+      console.warn("Received non-JSON message:", event.data);
+    }
+  };
+
+  ws.onclose = (event) => {
+    console.log(`Disconnected from pane: ${target}`, event.code, event.reason);
+    if (terminal) {
+      terminal.write("\r\n\x1b[31m[Connection closed]\x1b[0m\r\n");
+    }
+  };
+
+  ws.onerror = (err) => {
+    console.error("WebSocket error:", err);
+  };
+}
+
+/**
+ * Select a pane to view
+ */
+function selectPane(target: string) {
+  currentPane = target;
+
+  // Update UI
+  sessionsList.querySelectorAll(".pane-item").forEach((el) => {
+    el.classList.toggle("selected", el.getAttribute("data-target") === target);
+  });
+
+  terminalHeader.textContent = target;
+
+  // Initialize terminal if needed
+  if (!terminal) {
+    initTerminal();
+  } else {
+    terminal.reset();
+  }
+
+  // Connect to the pane
+  connectToPane(target);
+}
+
+/**
+ * Refresh sessions list periodically
+ */
+async function refreshSessions() {
+  const sessions = await fetchSessions();
+  renderSessionsList(sessions);
+}
+
+/**
+ * Initialize the app
+ */
+async function init() {
+  // Initial fetch
+  await refreshSessions();
+
+  // Start periodic refresh (every 2 seconds for attention detection)
+  sessionsRefreshInterval = window.setInterval(refreshSessions, 2000);
+}
+
+// Start the app
+init();

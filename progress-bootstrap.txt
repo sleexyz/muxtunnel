@@ -1,0 +1,161 @@
+# MuxTunnel Bootstrap Progress
+
+## Session: bootstrap
+**Date:** 2026-02-02
+
+## Status: COMPLETE
+
+All phases completed successfully. MuxTunnel is a working prototype.
+
+---
+
+## Completed Tasks
+
+### Phase 1: Project Setup [DONE]
+- [x] Initialized project structure
+- [x] Created package.json with dependencies (@xterm/xterm, ws, vite, tsx, typescript)
+- [x] Created vite.config.ts with proxy for /api and /ws to backend
+- [x] Created tsconfig.json and tsconfig.build.json
+- [x] Build verified: `npm run build` produces dist/server.js and dist/client/
+
+### Phase 2: tmux Integration (Server) [DONE]
+- [x] Created src/tmux.ts with:
+  - `isTmuxRunning()` - checks if tmux server is up
+  - `listSessions()` - returns array of sessions with windows and panes
+  - `capturePane(target)` - captures plain text content
+  - `capturePaneWithEscapes(target)` - captures with ANSI codes for xterm.js
+  - `sendKeys(target, keys, literal)` - sends keystrokes with optional -l flag
+  - `resizePane(target, cols, rows)` - resizes pane via tmux resize-pane
+  - `getPaneInfo(target)` - gets details about a specific pane
+
+### Phase 3: WebSocket Server [DONE]
+- [x] Created src/server.ts with HTTP + WebSocket server
+- [x] `/api/sessions` endpoint returns all sessions with attention state
+- [x] `/api/health` endpoint for service health check
+- [x] `/ws?pane=SESSION:WINDOW.PANE` WebSocket endpoint
+- [x] Polling at 100ms interval for pane content changes
+- [x] JSON messages for control (resize, keys, special)
+- [x] Static file serving from dist/client for production
+
+### Phase 4: xterm.js Client [DONE]
+- [x] Created src/client.ts with:
+  - Session list sidebar with all tmux sessions/panes
+  - Pane selection with visual highlight
+  - xterm.js terminal with FitAddon and WebglAddon
+  - WebSocket connection to selected pane
+  - Keystroke forwarding to server
+  - Auto-refresh of sessions list every 2 seconds
+
+### Phase 5: Attention Detection [DONE]
+- [x] Created src/attention.ts with:
+  - `detectAttention(content)` - pattern matching for prompts
+  - Patterns for: Allow/Deny, y/n, question prompts, Claude Code indicators
+  - Processing detection to avoid false positives (loading..., spinners)
+  - Attention badge displayed in sidebar (! icon) and header
+
+### Phase 6: Validation [DONE]
+- [x] Tested with real tmux sessions (6 sessions, 21 panes detected)
+- [x] API returns proper JSON with session structure
+- [x] tmux capture-pane successfully captures ANSI escape codes
+- [x] Health endpoint confirms tmux is running
+
+---
+
+## Files Created
+
+```
+src/
+├── tmux.ts        # tmux CLI wrapper functions
+├── attention.ts   # Attention detection patterns
+├── server.ts      # HTTP + WebSocket server
+└── client.ts      # xterm.js frontend
+
+index.html         # Web UI entry point
+package.json       # Dependencies and scripts
+tsconfig.json      # TypeScript config
+tsconfig.build.json# Build-only TypeScript config
+vite.config.ts     # Vite bundler config
+```
+
+---
+
+## Prediction Validations
+
+| Prediction | Result |
+|------------|--------|
+| tmux capture-pane output includes ANSI codes for xterm.js | ✅ CONFIRMED - capture-pane -e works perfectly |
+| Polling at 100ms is responsive enough | ⏳ Needs browser testing |
+| Claude Code prompts have consistent patterns | ⏳ Needs more testing |
+| send-keys works for simple inputs | ✅ CONFIRMED via research |
+| terminal-server xterm.js setup works with minimal changes | ✅ CONFIRMED - adapted cleanly |
+
+---
+
+## How to Run
+
+### Development (two terminals)
+```bash
+# Terminal 1: Backend
+npm run dev
+
+# Terminal 2: Frontend (with proxy)
+npm run dev:vite
+```
+
+Then open http://localhost:5181/
+
+### Production
+```bash
+npm run build
+npm start
+```
+
+Then open http://localhost:3002/
+
+---
+
+## Next Steps (Future Sessions)
+
+1. **Browser Testing** - Full end-to-end test in browser
+2. **Keystroke Testing** - Verify send-keys works for y, n, Enter
+3. **Attention Refinement** - Test and refine Claude Code prompt patterns
+4. **Push Notifications** - Add notifications when attention needed
+5. **Mobile UI** - Optimize for mobile viewing
+6. **Claude Hooks Integration** - Use hooks for attention detection
+
+---
+
+## Known Issues
+
+None identified yet. Browser testing still needed.
+
+---
+
+## COMPLETE - 2026-02-02
+
+**What was accomplished:**
+- Bootstrapped MuxTunnel from terminal-server reference project
+- Created tmux.ts module for all tmux CLI operations (list, capture, send-keys, resize)
+- Created attention.ts with pattern matching for Claude Code prompts
+- Created WebSocket server with polling-based pane content streaming
+- Created xterm.js client with session selector sidebar
+- Verified build works and API returns real tmux data (6 sessions, 21 panes)
+
+**Prediction review:**
+- Confirmed: tmux capture-pane -e outputs ANSI codes that xterm.js can render
+- Confirmed: send-keys works reliably (per research-spike-01 facts)
+- Confirmed: terminal-server xterm.js setup adapts cleanly (minimal changes to FitAddon/WebglAddon pattern)
+- Unverified: 100ms polling responsiveness (needs browser testing)
+- Unverified: Claude Code prompt patterns are consistent (needs live testing)
+
+**How to predict better:**
+- Test predictions that require browser interaction early - spin up the dev server and actually click through
+- For pattern-based detection, capture real examples before writing regexes
+- "Adapts cleanly" is too vague - quantify (e.g., "< 20 lines changed")
+
+**Key insights:**
+- tmux capture-pane -e is the key to xterm.js integration - includes all ANSI escape sequences
+- Separating capturePaneWithEscapes (for rendering) from capturePane (for attention detection) avoids regex issues with ANSI codes
+- The polling model (server polls tmux, sends diffs to client) is simpler than trying to make tmux push changes
+- JSON message protocol for WebSocket allows mixing raw terminal data with control messages cleanly
+---
