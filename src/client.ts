@@ -17,6 +17,9 @@ interface TmuxPane {
   // Geometry for cropping (0-indexed, in character units)
   left: number;
   top: number;
+  // Process info
+  pid: number;
+  process: string;
   needsAttention?: boolean;
   attentionReason?: string;
 }
@@ -80,18 +83,26 @@ function renderSessionsList(sessions: TmuxSession[]) {
   let html = "";
 
   for (const session of sessions) {
+    const isSessionSelected = currentSession === session.name && currentPane === null;
     html += `<div class="session-group">`;
-    html += `<div class="session-name">${escapeHtml(session.name)}</div>`;
+    html += `<div class="session-name clickable ${isSessionSelected ? "selected" : ""}" data-session="${escapeHtml(session.name)}">${escapeHtml(session.name)}</div>`;
 
     for (const window of session.windows) {
       for (const pane of window.panes) {
         const isSelected = pane.target === currentPane;
         const hasAttention = pane.needsAttention;
+        const processName = pane.process || "";
 
         html += `
           <div class="pane-item ${isSelected ? "selected" : ""}" data-target="${escapeHtml(pane.target)}">
-            <span class="pane-id">${window.index}:${pane.paneIndex}</span>
-            ${hasAttention ? `<span class="attention-badge">!</span>` : ""}
+            <span class="pane-info">
+              <span class="pane-id">${window.index}:${pane.paneIndex}</span>
+              <span class="pane-process">${escapeHtml(processName)}</span>
+            </span>
+            <span class="pane-actions">
+              ${hasAttention ? `<span class="attention-badge">!</span>` : ""}
+              <span class="close-btn" data-close="${escapeHtml(pane.target)}">&times;</span>
+            </span>
           </div>
         `;
       }
@@ -110,6 +121,28 @@ function renderSessionsList(sessions: TmuxSession[]) {
 function setupEventDelegation() {
   sessionsList.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
+
+    // Handle close button clicks
+    const closeBtn = target.closest(".close-btn");
+    if (closeBtn) {
+      const paneTarget = closeBtn.getAttribute("data-close");
+      if (paneTarget) {
+        closePane(paneTarget);
+      }
+      return;
+    }
+
+    // Handle session name clicks (full session view)
+    const sessionName = target.closest(".session-name");
+    if (sessionName) {
+      const session = sessionName.getAttribute("data-session");
+      if (session) {
+        selectSession(session);
+      }
+      return;
+    }
+
+    // Handle pane item clicks
     const paneItem = target.closest(".pane-item");
     if (paneItem) {
       const paneTarget = paneItem.getAttribute("data-target");
@@ -200,9 +233,11 @@ function initTerminal(sessionName: string) {
       if (core?._renderService?.dimensions?.css?.cell) {
         const dims = core._renderService.dimensions.css.cell;
         cellDimensions = { width: dims.width, height: dims.height };
-        // If we have a current pane, apply crop now that we have dimensions
+        // Apply appropriate view based on selection
         if (currentPane) {
           applyCropForPane(currentPane);
+        } else {
+          showFullSession(sessionName);
         }
       }
     }
@@ -368,6 +403,94 @@ function selectPane(target: string) {
   // Note: Input goes to whichever pane tmux has active.
   // User can switch active pane using tmux prefix + arrow keys.
   // Future: could add API to sync pane focus via tmux select-pane
+}
+
+/**
+ * Select a session to view full tiled view (no pane cropping)
+ */
+function selectSession(sessionName: string) {
+  const session = sessionsData.find(s => s.name === sessionName);
+  if (!session) {
+    console.error(`Session ${sessionName} not found`);
+    return;
+  }
+
+  const needsReconnect = currentSession !== sessionName;
+  currentPane = null; // No specific pane selected
+
+  // Update UI - highlight session name, remove pane selection
+  sessionsList.querySelectorAll(".pane-item").forEach((el) => {
+    el.classList.remove("selected");
+  });
+  sessionsList.querySelectorAll(".session-name").forEach((el) => {
+    el.classList.toggle("selected", el.getAttribute("data-session") === sessionName);
+  });
+
+  terminalHeader.textContent = sessionName;
+
+  if (needsReconnect) {
+    // Different session - need to reconnect
+    initTerminal(sessionName);
+    // Use first pane as connection target (needed for PTY)
+    const firstPane = session.windows[0]?.panes[0];
+    if (firstPane) {
+      connectToSession(sessionName, firstPane.target);
+    }
+  }
+
+  // Show full session (no cropping)
+  showFullSession(sessionName);
+}
+
+/**
+ * Show full session view (no cropping)
+ */
+function showFullSession(sessionName: string) {
+  if (!cellDimensions) {
+    return;
+  }
+
+  const session = sessionsData.find(s => s.name === sessionName);
+  if (!session?.dimensions) {
+    return;
+  }
+
+  const { width, height } = session.dimensions;
+
+  // Set container to full session size
+  cropContainer.style.width = `${width * cellDimensions.width}px`;
+  cropContainer.style.height = `${height * cellDimensions.height}px`;
+
+  // No transform needed - show from origin
+  terminalPositioner.style.transform = "translate(0, 0)";
+}
+
+/**
+ * Close a pane via API
+ */
+async function closePane(target: string) {
+  try {
+    const res = await fetch(`/api/panes/${encodeURIComponent(target)}`, {
+      method: "DELETE",
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      console.error("Failed to close pane:", data.error);
+      return;
+    }
+
+    // If we closed the currently selected pane, clear selection
+    if (currentPane === target) {
+      currentPane = null;
+      // Could auto-select another pane here
+    }
+
+    // Refresh sessions list
+    await refreshSessions();
+  } catch (err) {
+    console.error("Failed to close pane:", err);
+  }
 }
 
 /**

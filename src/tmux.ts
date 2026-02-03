@@ -13,6 +13,9 @@ export interface TmuxPane {
   // Geometry for cropping (0-indexed, in character units)
   left: number;
   top: number;
+  // Process info
+  pid: number;
+  process: string; // The actual running command (not just shell name)
 }
 
 export interface TmuxSession {
@@ -24,6 +27,97 @@ export interface TmuxWindow {
   index: number;
   name: string;
   panes: TmuxPane[];
+}
+
+/**
+ * Extract clean command name from ps output
+ * Handles: /path/to/cmd, "cmd args", and combinations
+ */
+function extractCmdName(psOutput: string): string {
+  // First, get just the first word (in case args are included)
+  const firstWord = psOutput.split(/\s+/)[0];
+  // Then extract basename from path
+  const lastSlash = firstWord.lastIndexOf("/");
+  return lastSlash >= 0 ? firstWord.slice(lastSlash + 1) : firstWord;
+}
+
+/**
+ * Get child PIDs of a process (portable across macOS and Linux)
+ */
+function getChildPids(ppid: number): number[] {
+  try {
+    // Use ps which works consistently across platforms
+    const output = execSync(`ps -eo pid,ppid`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    const children: number[] = [];
+    for (const line of output.split("\n")) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 2 && parseInt(parts[1], 10) === ppid) {
+        children.push(parseInt(parts[0], 10));
+      }
+    }
+    return children;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the effective process name for a pane
+ * Traverses the process tree to find the actual running command (skipping shells and wrappers)
+ */
+function getEffectiveProcess(pid: number, currentCommand: string): string {
+  // Commands to skip through when looking for the "real" process
+  const wrappers = ["zsh", "bash", "sh", "fish", "tcsh", "csh", "-zsh", "-bash", "-sh", "npm", "npx", "node"];
+
+  // If not a wrapper, return the current command
+  if (!wrappers.includes(currentCommand)) {
+    return currentCommand;
+  }
+
+  try {
+    // Walk down the process tree until we find a non-wrapper or hit a leaf
+    let currentPid = pid;
+    let depth = 0;
+    const maxDepth = 5; // Prevent infinite loops
+
+    while (depth < maxDepth) {
+      const children = getChildPids(currentPid);
+
+      if (children.length === 0) {
+        // No children - get this process's command
+        if (currentPid !== pid) {
+          const cmd = execSync(`ps -o comm= -p ${currentPid}`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+          if (cmd) {
+            return extractCmdName(cmd);
+          }
+        }
+        return currentCommand;
+      }
+
+      // Check the first child
+      const childPid = children[0];
+      const childCmd = execSync(`ps -o comm= -p ${childPid}`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+
+      if (!childCmd) {
+        return currentCommand;
+      }
+
+      const cmdName = extractCmdName(childCmd);
+
+      // If this is not a wrapper, we found our target
+      if (!wrappers.includes(cmdName) && !wrappers.includes(`-${cmdName}`)) {
+        return cmdName;
+      }
+
+      // Otherwise, continue down the tree
+      currentPid = childPid;
+      depth++;
+    }
+
+    return currentCommand;
+  } catch {
+    return currentCommand;
+  }
 }
 
 /**
@@ -47,9 +141,9 @@ export function listSessions(): TmuxSession[] {
   }
 
   try {
-    // Format: session_name:window_index:window_name:pane_index:pane_id:pane_active:pane_width:pane_height:pane_left:pane_top
+    // Format: session_name:window_index:window_name:pane_index:pane_id:pane_active:pane_width:pane_height:pane_left:pane_top:pane_pid:pane_current_command
     const output = execSync(
-      'tmux list-panes -a -F "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}"',
+      'tmux list-panes -a -F "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}:#{pane_pid}:#{pane_current_command}"',
       { encoding: "utf-8" }
     );
 
@@ -58,7 +152,7 @@ export function listSessions(): TmuxSession[] {
     for (const line of output.trim().split("\n")) {
       if (!line) continue;
 
-      const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr] = line.split(":");
+      const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr, pidStr, currentCommand] = line.split(":");
       const windowIndex = parseInt(windowIndexStr, 10);
       const paneIndex = parseInt(paneIndexStr, 10);
       const active = paneActiveStr === "1";
@@ -66,6 +160,8 @@ export function listSessions(): TmuxSession[] {
       const rows = parseInt(rowsStr, 10);
       const left = parseInt(leftStr, 10);
       const top = parseInt(topStr, 10);
+      const pid = parseInt(pidStr, 10);
+      const process = getEffectiveProcess(pid, currentCommand);
 
       const target = `${sessionName}:${windowIndex}.${paneIndex}`;
 
@@ -81,6 +177,8 @@ export function listSessions(): TmuxSession[] {
         rows,
         left,
         top,
+        pid,
+        process,
       };
 
       if (!sessions.has(sessionName)) {
@@ -224,6 +322,21 @@ export function getSessionDimensions(sessionName: string): { width: number; heig
 }
 
 /**
+ * Kill a tmux pane
+ */
+export function killPane(target: string): void {
+  if (!isTmuxRunning()) {
+    throw new Error("tmux is not running");
+  }
+
+  try {
+    execSync(`tmux kill-pane -t ${target}`, { encoding: "utf-8" });
+  } catch (err) {
+    throw new Error(`Failed to kill pane ${target}: ${err}`);
+  }
+}
+
+/**
  * Get detailed info about a specific pane
  */
 export function getPaneInfo(target: string): TmuxPane | null {
@@ -233,11 +346,13 @@ export function getPaneInfo(target: string): TmuxPane | null {
 
   try {
     const output = execSync(
-      `tmux display-message -t ${target} -p "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}"`,
+      `tmux display-message -t ${target} -p "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}:#{pane_pid}:#{pane_current_command}"`,
       { encoding: "utf-8" }
     ).trim();
 
-    const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr] = output.split(":");
+    const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr, pidStr, currentCommand] = output.split(":");
+    const pid = parseInt(pidStr, 10);
+    const process = getEffectiveProcess(pid, currentCommand);
 
     return {
       sessionName,
@@ -251,6 +366,8 @@ export function getPaneInfo(target: string): TmuxPane | null {
       rows: parseInt(rowsStr, 10),
       left: parseInt(leftStr, 10),
       top: parseInt(topStr, 10),
+      pid,
+      process,
     };
   } catch (err) {
     console.error(`Failed to get pane info for ${target}:`, err);

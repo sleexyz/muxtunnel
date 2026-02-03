@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { listSessions, capturePane, getPaneInfo, isTmuxRunning, getSessionDimensions } from "./tmux.js";
+import { listSessions, capturePane, getPaneInfo, isTmuxRunning, getSessionDimensions, killPane } from "./tmux.js";
 import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
 
@@ -98,7 +98,7 @@ const server = http.createServer((req, res) => {
 
   // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
@@ -122,6 +122,21 @@ const server = http.createServer((req, res) => {
       service: "muxtunnel",
       tmuxRunning: isTmuxRunning(),
     }));
+    return;
+  }
+
+  // DELETE /api/panes/:target - kill a pane
+  const paneMatch = url.pathname.match(/^\/api\/panes\/(.+)$/);
+  if (paneMatch && req.method === "DELETE") {
+    const target = decodeURIComponent(paneMatch[1]);
+    try {
+      killPane(target);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
     return;
   }
 

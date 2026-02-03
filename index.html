@@ -44,6 +44,19 @@
         margin-bottom: 6px;
         text-transform: uppercase;
       }
+      .session-name.clickable {
+        cursor: pointer;
+        padding: 4px 6px;
+        margin: -4px -6px 6px -6px;
+        border-radius: 4px;
+      }
+      .session-name.clickable:hover {
+        background: #2a2d2e;
+      }
+      .session-name.selected {
+        background: #094771;
+        color: #ccc;
+      }
       .pane-item {
         padding: 8px 10px;
         cursor: pointer;
@@ -59,17 +72,51 @@
       .pane-item.selected {
         background: #094771;
       }
-      .pane-item .pane-id {
+      .pane-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        overflow: hidden;
+      }
+      .pane-id {
         font-family: 'Menlo', 'Monaco', monospace;
         font-size: 13px;
+        flex-shrink: 0;
       }
-      .pane-item .attention-badge {
+      .pane-process {
+        font-size: 12px;
+        color: #888;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pane-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .attention-badge {
         background: #f48771;
         color: #1e1e1e;
         font-size: 10px;
         font-weight: 700;
         padding: 2px 6px;
         border-radius: 10px;
+      }
+      .close-btn {
+        opacity: 0;
+        font-size: 16px;
+        color: #888;
+        padding: 0 4px;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      .pane-item:hover .close-btn {
+        opacity: 1;
+      }
+      .close-btn:hover {
+        color: #f48771;
       }
       #terminal-container {
         flex: 1;
