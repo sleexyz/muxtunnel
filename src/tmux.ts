@@ -10,6 +10,9 @@ export interface TmuxPane {
   active: boolean;
   cols: number;
   rows: number;
+  // Geometry for cropping (0-indexed, in character units)
+  left: number;
+  top: number;
 }
 
 export interface TmuxSession {
@@ -44,9 +47,9 @@ export function listSessions(): TmuxSession[] {
   }
 
   try {
-    // Format: session_name:window_index:window_name:pane_index:pane_id:pane_active:pane_width:pane_height
+    // Format: session_name:window_index:window_name:pane_index:pane_id:pane_active:pane_width:pane_height:pane_left:pane_top
     const output = execSync(
-      'tmux list-panes -a -F "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}"',
+      'tmux list-panes -a -F "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}"',
       { encoding: "utf-8" }
     );
 
@@ -55,12 +58,14 @@ export function listSessions(): TmuxSession[] {
     for (const line of output.trim().split("\n")) {
       if (!line) continue;
 
-      const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr] = line.split(":");
+      const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr] = line.split(":");
       const windowIndex = parseInt(windowIndexStr, 10);
       const paneIndex = parseInt(paneIndexStr, 10);
       const active = paneActiveStr === "1";
       const cols = parseInt(colsStr, 10);
       const rows = parseInt(rowsStr, 10);
+      const left = parseInt(leftStr, 10);
+      const top = parseInt(topStr, 10);
 
       const target = `${sessionName}:${windowIndex}.${paneIndex}`;
 
@@ -74,6 +79,8 @@ export function listSessions(): TmuxSession[] {
         active,
         cols,
         rows,
+        left,
+        top,
       };
 
       if (!sessions.has(sessionName)) {
@@ -196,11 +203,11 @@ export function getPaneInfo(target: string): TmuxPane | null {
 
   try {
     const output = execSync(
-      `tmux display-message -t ${target} -p "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}"`,
+      `tmux display-message -t ${target} -p "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}"`,
       { encoding: "utf-8" }
     ).trim();
 
-    const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr] = output.split(":");
+    const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr] = output.split(":");
 
     return {
       sessionName,
@@ -212,6 +219,8 @@ export function getPaneInfo(target: string): TmuxPane | null {
       active: paneActiveStr === "1",
       cols: parseInt(colsStr, 10),
       rows: parseInt(rowsStr, 10),
+      left: parseInt(leftStr, 10),
+      top: parseInt(topStr, 10),
     };
   } catch (err) {
     console.error(`Failed to get pane info for ${target}:`, err);

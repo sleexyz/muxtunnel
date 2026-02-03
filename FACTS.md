@@ -40,3 +40,18 @@ Codebase-specific truths about MuxTunnel.
 - tmux sees a real terminal client → resizes session → formats output correctly
 - Bidirectional: PTY output streams to WebSocket, input forwards to PTY stdin
 - This is how proper web terminals (ttyd, gotty, wetty) work
+- **Critical:** tmux client and server versions must match (see HEURISTICS#tmux-version-mismatch)
+
+## pane-geometry
+**tmux pane geometry for cropping**
+- `tmux list-panes -F '#{pane_id}:#{pane_left}:#{pane_top}:#{pane_width}:#{pane_height}'`
+- Coordinates are 0-indexed, in character units (not pixels)
+- Border separators are 1 character wide between panes
+- No push mechanism for geometry changes; must poll
+
+## xterm-cell-dimensions
+**Getting character dimensions from xterm.js**
+- Internal API: `terminal._core._renderService.dimensions.css.cell.{width,height}`
+- Returns pixel dimensions per character cell
+- Used by FitAddon internally; same approach works for cropping
+- Must wait for terminal to render before dimensions are available

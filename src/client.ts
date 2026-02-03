@@ -13,6 +13,9 @@ interface TmuxPane {
   active: boolean;
   cols: number;
   rows: number;
+  // Geometry for cropping (0-indexed, in character units)
+  left: number;
+  top: number;
   needsAttention?: boolean;
   attentionReason?: string;
 }
@@ -33,11 +36,15 @@ let fitAddon: FitAddon | null = null;
 let ws: WebSocket | null = null;
 let currentPane: string | null = null;
 let sessionsRefreshInterval: number | null = null;
+let sessionsData: TmuxSession[] = [];
+let cellDimensions: { width: number; height: number } | null = null;
 
 // DOM elements
 const sessionsList = document.getElementById("sessions-list")!;
 const terminalContainer = document.getElementById("terminal")!;
 const terminalHeader = document.getElementById("terminal-header")!;
+const cropContainer = document.getElementById("crop-container")!;
+const terminalPositioner = document.getElementById("terminal-positioner")!;
 
 /**
  * Fetch sessions from the API
@@ -149,10 +156,39 @@ function initTerminal() {
   terminal.open(terminalContainer);
   fitAddon.fit();
 
+  // Capture cell dimensions after render (accessing private API as FitAddon does)
+  // Use requestAnimationFrame to ensure render is complete
+  requestAnimationFrame(() => {
+    if (terminal) {
+      const core = (terminal as any)._core;
+      if (core?._renderService?.dimensions?.css?.cell) {
+        const dims = core._renderService.dimensions.css.cell;
+        cellDimensions = { width: dims.width, height: dims.height };
+        console.log("Cell dimensions:", cellDimensions);
+        // If we have a current pane, apply crop now that we have dimensions
+        if (currentPane) {
+          applyCropForPane(currentPane);
+        }
+      }
+    }
+  });
+
   // Handle window resize
   window.addEventListener("resize", () => {
     if (fitAddon) {
       fitAddon.fit();
+      // Re-capture cell dimensions after resize
+      if (terminal) {
+        const core = (terminal as any)._core;
+        if (core?._renderService?.dimensions?.css?.cell) {
+          const dims = core._renderService.dimensions.css.cell;
+          cellDimensions = { width: dims.width, height: dims.height };
+          // Re-apply crop with new dimensions
+          if (currentPane) {
+            applyCropForPane(currentPane);
+          }
+        }
+      }
       // Send resize to server
       if (ws && ws.readyState === WebSocket.OPEN && terminal) {
         ws.send(JSON.stringify({
@@ -171,6 +207,54 @@ function initTerminal() {
       ws.send(JSON.stringify({ type: "keys", keys: data }));
     }
   });
+}
+
+/**
+ * Find a pane by target in the sessions data
+ */
+function findPane(target: string): TmuxPane | null {
+  for (const session of sessionsData) {
+    for (const window of session.windows) {
+      for (const pane of window.panes) {
+        if (pane.target === target) {
+          return pane;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Apply crop to show only the selected pane
+ * @param target - pane target (e.g., "session:0.0")
+ */
+function applyCropForPane(target: string) {
+  if (!cellDimensions) {
+    console.log("Cell dimensions not available yet, skipping crop");
+    return;
+  }
+
+  const pane = findPane(target);
+  if (!pane) {
+    console.warn(`Pane ${target} not found in sessions data`);
+    return;
+  }
+
+  // Account for border offset: panes not at edge have a 1-char border to their left/top
+  const borderLeftOffset = pane.left > 0 ? 1 : 0;
+  const borderTopOffset = pane.top > 0 ? 1 : 0;
+  const effectiveLeft = pane.left + borderLeftOffset;
+  const effectiveTop = pane.top + borderTopOffset;
+
+  // Set container size to match pane dimensions (in pixels)
+  cropContainer.style.width = `${pane.cols * cellDimensions.width}px`;
+  cropContainer.style.height = `${pane.rows * cellDimensions.height}px`;
+
+  // Translate the terminal to show the correct region
+  terminalPositioner.style.transform = `translate(${-effectiveLeft * cellDimensions.width}px, ${-effectiveTop * cellDimensions.height}px)`;
+
+  console.log(`Crop applied: pane=${target}, left=${effectiveLeft}, top=${effectiveTop}, size=${pane.cols}x${pane.rows}`);
 }
 
 /**
@@ -260,6 +344,8 @@ function selectPane(target: string) {
   } else {
     // Clear terminal for new PTY connection
     terminal.clear();
+    // Apply crop for the selected pane
+    applyCropForPane(target);
   }
 
   // Connect to the pane
@@ -271,6 +357,7 @@ function selectPane(target: string) {
  */
 async function refreshSessions() {
   const sessions = await fetchSessions();
+  sessionsData = sessions;
   renderSessionsList(sessions);
 }
 

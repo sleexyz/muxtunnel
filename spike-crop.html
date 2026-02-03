@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Pane Cropping Spike</title>
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #eee;
+      font-family: system-ui, sans-serif;
+    }
+    h1 { margin-top: 0; }
+    .controls {
+      margin-bottom: 20px;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+    }
+    .controls label {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .controls input {
+      width: 60px;
+      padding: 4px;
+    }
+    .controls button {
+      padding: 8px 16px;
+      cursor: pointer;
+    }
+    .info {
+      background: #2a2a4e;
+      padding: 12px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    /* The key cropping approach */
+    .crop-container {
+      border: 2px solid #4a4a8e;
+      overflow: hidden;
+      display: inline-block;
+    }
+    .terminal-positioner {
+      /* We'll set transform via JS to shift the terminal */
+    }
+
+    /* Full terminal view for comparison */
+    .full-view {
+      margin-top: 20px;
+      opacity: 0.5;
+    }
+    .full-view h3 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Pane Cropping Spike</h1>
+
+  <div class="controls">
+    <label>
+      Pane Left: <input type="number" id="paneLeft" value="0">
+    </label>
+    <label>
+      Pane Top: <input type="number" id="paneTop" value="0">
+    </label>
+    <label>
+      Pane Width: <input type="number" id="paneWidth" value="40">
+    </label>
+    <label>
+      Pane Height: <input type="number" id="paneHeight" value="12">
+    </label>
+    <button id="applyCrop">Apply Crop</button>
+    <button id="resetCrop">Show Full</button>
+  </div>
+
+  <div class="info" id="info">Loading...</div>
+
+  <h3>Cropped View (simulated single pane)</h3>
+  <div class="crop-container" id="cropContainer">
+    <div class="terminal-positioner" id="terminalPositioner">
+      <div id="terminal"></div>
+    </div>
+  </div>
+
+  <div class="full-view">
+    <h3>Full Terminal (for reference, 50% opacity)</h3>
+    <div id="terminalFull"></div>
+  </div>
+
+  <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script>
+    const { Terminal } = window;
+
+    // Create terminal
+    const terminal = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      cols: 80,
+      rows: 24,
+      theme: {
+        background: "#1e1e1e",
+        foreground: "#d4d4d4",
+      },
+    });
+
+    const terminalEl = document.getElementById('terminal');
+    terminal.open(terminalEl);
+
+    // Write some test content to simulate tmux panes
+    function writeTestContent() {
+      // Simulate a 4-pane layout:
+      // +------------------+------------------+
+      // | Pane 0 (editor)  | Pane 1 (logs)    |
+      // |                  |                  |
+      // +------------------+------------------+
+      // | Pane 2 (shell)   | Pane 3 (tests)   |
+      // +------------------+------------------+
+
+      // Clear and write test pattern
+      terminal.write('\x1b[2J\x1b[H'); // Clear screen, home cursor
+
+      // Draw a grid pattern with different content in each quadrant
+      const cols = 80;
+      const rows = 24;
+      const halfCols = 40;
+      const halfRows = 12;
+
+      for (let row = 0; row < rows; row++) {
+        let line = '';
+        for (let col = 0; col < cols; col++) {
+          // Determine which pane this cell is in
+          const paneX = col < halfCols ? 0 : 1;
+          const paneY = row < halfRows ? 0 : 1;
+          const pane = paneY * 2 + paneX;
+
+          // Draw borders between panes
+          if (col === halfCols - 1) {
+            line += '\x1b[90m│\x1b[0m'; // dim gray border
+          } else if (row === halfRows - 1 && col < halfCols) {
+            line += '\x1b[90m─\x1b[0m';
+          } else if (row === halfRows - 1 && col >= halfCols) {
+            line += '\x1b[90m─\x1b[0m';
+          } else {
+            // Content based on pane
+            const localCol = col < halfCols ? col : col - halfCols;
+            const localRow = row < halfRows ? row : row - halfRows;
+
+            if (pane === 0) {
+              // Editor pane - show line numbers and code
+              if (localCol < 4) {
+                line += `\x1b[33m${String(localRow + 1).padStart(3)} \x1b[0m`;
+              } else if (localRow === 0) {
+                line += '\x1b[36mfunction\x1b[0m \x1b[32mmain\x1b[0m() {       '.substring(localCol - 4, localCol - 3) || ' ';
+              } else {
+                line += ' ';
+              }
+            } else if (pane === 1) {
+              // Logs pane
+              if (localRow < 3 && localCol < 30) {
+                const logLines = [
+                  '\x1b[32m[INFO]\x1b[0m Server started    ',
+                  '\x1b[33m[WARN]\x1b[0m High memory usage ',
+                  '\x1b[31m[ERR]\x1b[0m Connection timeout',
+                ];
+                line += logLines[localRow][localCol] || ' ';
+              } else {
+                line += ' ';
+              }
+            } else if (pane === 2) {
+              // Shell pane
+              if (localRow === 0 && localCol < 15) {
+                line += '\x1b[32m$\x1b[0m npm run dev  '.substring(localCol, localCol + 1) || ' ';
+              } else {
+                line += ' ';
+              }
+            } else {
+              // Test pane
+              if (localRow === 0 && localCol < 20) {
+                line += '\x1b[32m✓\x1b[0m All tests passed'.substring(localCol, localCol + 1) || ' ';
+              } else {
+                line += ' ';
+              }
+            }
+          }
+        }
+        terminal.write(line);
+        if (row < rows - 1) terminal.write('\r\n');
+      }
+    }
+
+    // Write initial content
+    writeTestContent();
+
+    // Get cell dimensions (accessing private API as FitAddon does)
+    function getCellDimensions() {
+      const core = terminal._core;
+      const dims = core._renderService.dimensions;
+      return {
+        width: dims.css.cell.width,
+        height: dims.css.cell.height,
+      };
+    }
+
+    // Update info display
+    function updateInfo() {
+      const cell = getCellDimensions();
+      const info = document.getElementById('info');
+      info.textContent = `Cell dimensions: ${cell.width.toFixed(2)}px × ${cell.height.toFixed(2)}px | Terminal: ${terminal.cols}×${terminal.rows}`;
+    }
+
+    // Apply crop based on inputs
+    function applyCrop() {
+      const left = parseInt(document.getElementById('paneLeft').value) || 0;
+      const top = parseInt(document.getElementById('paneTop').value) || 0;
+      const width = parseInt(document.getElementById('paneWidth').value) || 40;
+      const height = parseInt(document.getElementById('paneHeight').value) || 12;
+
+      const cell = getCellDimensions();
+      const container = document.getElementById('cropContainer');
+      const positioner = document.getElementById('terminalPositioner');
+
+      // Set container size to match pane dimensions
+      container.style.width = `${width * cell.width}px`;
+      container.style.height = `${height * cell.height}px`;
+
+      // Translate the terminal to show the correct region
+      positioner.style.transform = `translate(${-left * cell.width}px, ${-top * cell.height}px)`;
+
+      updateInfo();
+    }
+
+    // Reset to full view
+    function resetCrop() {
+      const container = document.getElementById('cropContainer');
+      const positioner = document.getElementById('terminalPositioner');
+
+      container.style.width = '';
+      container.style.height = '';
+      positioner.style.transform = '';
+
+      document.getElementById('paneLeft').value = '0';
+      document.getElementById('paneTop').value = '0';
+      document.getElementById('paneWidth').value = terminal.cols;
+      document.getElementById('paneHeight').value = terminal.rows;
+
+      updateInfo();
+    }
+
+    // Event handlers
+    document.getElementById('applyCrop').addEventListener('click', applyCrop);
+    document.getElementById('resetCrop').addEventListener('click', resetCrop);
+
+    // Initial setup
+    setTimeout(() => {
+      updateInfo();
+      // Set initial values to match terminal size
+      document.getElementById('paneWidth').value = terminal.cols;
+      document.getElementById('paneHeight').value = terminal.rows;
+    }, 100);
+
+    // Expose for debugging
+    window.terminal = terminal;
+    window.getCellDimensions = getCellDimensions;
+    window.applyCrop = applyCrop;
+  </script>
+</body>
+</html>

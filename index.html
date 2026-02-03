@@ -83,9 +83,24 @@
         font-size: 13px;
         color: #888;
       }
-      #terminal {
+      #terminal-wrapper {
         flex: 1;
-        overflow: auto;
+        overflow: hidden;
+        position: relative;
+      }
+      /* Crop container clips to show only selected pane */
+      #crop-container {
+        overflow: hidden;
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+      /* Positioner shifts terminal to show correct region */
+      #terminal-positioner {
+        position: relative;
+      }
+      #terminal {
+        /* Terminal size is set by xterm.js */
       }
       .no-selection {
         display: flex;
@@ -104,8 +119,14 @@
       </div>
       <div id="terminal-container">
         <div id="terminal-header">Select a pane</div>
-        <div id="terminal">
-          <div class="no-selection">Select a pane from the sidebar</div>
+        <div id="terminal-wrapper">
+          <div id="crop-container">
+            <div id="terminal-positioner">
+              <div id="terminal">
+                <div class="no-selection">Select a pane from the sidebar</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

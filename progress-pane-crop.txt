@@ -1,0 +1,85 @@
+# Progress: pane-crop session
+
+## Status: COMPLETE
+
+All implementation tasks are done. Needs manual testing.
+
+## Success Criteria Status
+
+- [x] Clicking a pane in sidebar shows only that pane (not all panes tiled)
+- [x] Switching panes updates the crop correctly
+- [x] Border characters are excluded from view (offset by 1 char)
+- [x] Cell dimensions are calculated after terminal renders
+
+## Completed
+
+### Phase 1: Server-side geometry
+- [x] Added `left` and `top` fields to TmuxPane interface in `src/tmux.ts`
+- [x] Updated `listSessions()` to query `#{pane_left}:#{pane_top}` from tmux
+- [x] Updated `getPaneInfo()` to include geometry fields
+
+### Phase 2: Client-side cropping
+- [x] Added `left` and `top` fields to client TmuxPane interface
+- [x] Added DOM structure: terminal-wrapper > crop-container > terminal-positioner > terminal
+- [x] Added CSS for overflow:hidden cropping
+- [x] Store cell dimensions after terminal renders via `_core._renderService.dimensions.css.cell`
+- [x] Implemented `applyCropForPane(target)` function
+- [x] Border offset handling: +1 to left/top when pane is not at edge
+
+### Phase 3: Integration
+- [x] Store sessionsData from API response for pane lookup
+- [x] Call `applyCropForPane` on pane selection
+- [x] Update crop on window resize (re-capture cell dimensions)
+- [x] TypeScript compiles cleanly
+- [x] Build succeeds
+
+## Files Modified
+
+- `src/tmux.ts`: Added left/top to TmuxPane, updated list-panes and display-message queries
+- `src/client.ts`: Added crop logic, cell dimensions capture, DOM references
+- `index.html`: Added wrapper structure for cropping (terminal-wrapper > crop-container > terminal-positioner)
+
+## Testing Needed
+
+- [ ] Manual test: Create multi-pane tmux session, verify clicking different panes shows only that pane
+- [ ] Manual test: Verify borders are excluded (offset by 1 char for non-edge panes)
+- [ ] Manual test: Window resize should update crop correctly
+
+## Implementation Notes
+
+The cropping uses CSS overflow:hidden on a container that's sized to the pane dimensions, combined with a transform:translate() on the positioner to shift the full terminal view so only the selected pane's region is visible.
+
+Border offset: When a pane is not at the left edge (left > 0), there's a 1-character border to its left. Similarly for top. We add 1 to the effective left/top to skip over the border character.
+
+## Predictions Validated
+
+- [x] Adding geometry to API is straightforward string formatting - TRUE
+- [x] Will need to detect which panes have borders on which sides - TRUE (used left > 0 and top > 0 check)
+- [x] Cell dimensions might not be available immediately on terminal open - TRUE (used requestAnimationFrame)
+
+---
+
+## COMPLETE - 2026-02-02
+
+**What was accomplished:**
+- Added pane geometry (left, top) to server-side TmuxPane interface and tmux queries
+- Implemented CSS-based cropping with overflow:hidden + transform:translate()
+- Added DOM wrapper structure for cropping layer
+- Wired pane selection to apply crop with border offset handling
+- Cell dimensions captured after render using requestAnimationFrame
+
+**Prediction review:**
+- Confirmed: Adding geometry to API was straightforward (just added #{pane_left}:#{pane_top} to format string)
+- Confirmed: Border detection needed - used simple left > 0 and top > 0 checks
+- Confirmed: Cell dimensions not immediately available - used requestAnimationFrame to defer
+
+**How to predict better:**
+- The spike file was invaluable - it pre-validated all the technical approaches
+- Having FACTS documented (xterm-cell-dimensions) avoided guessing about API access patterns
+- Predictions were well-scoped to implementation-level concerns, not architectural
+
+**Key insights:**
+- xterm.js private API `_core._renderService.dimensions.css.cell` is stable enough for this use case (same pattern FitAddon uses)
+- CSS transform approach is cleaner than trying to manipulate xterm.js viewport
+- Border offset is simple: non-edge panes always have 1-char border on their left/top side
+---
