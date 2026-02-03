@@ -4,9 +4,26 @@ import { TerminalView } from "./components/TerminalView";
 import { InputBar } from "./components/InputBar";
 import type { TmuxSession, TmuxPane } from "./types";
 
+// Get pane from URL query param
+function getPaneFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("pane");
+}
+
+// Update URL without refresh
+function updateUrl(pane: string | null) {
+  const url = new URL(window.location.href);
+  if (pane) {
+    url.searchParams.set("pane", pane);
+  } else {
+    url.searchParams.delete("pane");
+  }
+  window.history.pushState({}, "", url.toString());
+}
+
 export function App() {
   const [sessions, setSessions] = useState<TmuxSession[]>([]);
-  const [currentPane, setCurrentPane] = useState<string | null>(null);
+  const [currentPane, setCurrentPane] = useState<string | null>(getPaneFromUrl);
   const [currentSession, setCurrentSession] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -29,6 +46,29 @@ export function App() {
     const interval = setInterval(fetchSessions, 2000);
     return () => clearInterval(interval);
   }, [fetchSessions]);
+
+  // Track if change came from popstate (to avoid re-pushing URL)
+  const isPopStateRef = useRef(false);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handlePopState = () => {
+      isPopStateRef.current = true;
+      const pane = getPaneFromUrl();
+      setCurrentPane(pane);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  // Update URL when pane changes (skip on popstate-triggered changes)
+  useEffect(() => {
+    if (isPopStateRef.current) {
+      isPopStateRef.current = false;
+      return;
+    }
+    updateUrl(currentPane);
+  }, [currentPane]);
 
   // Find pane by target
   const findPane = useCallback(
@@ -54,6 +94,27 @@ export function App() {
     },
     [sessions]
   );
+
+  // Sync currentSession from URL pane when sessions load
+  useEffect(() => {
+    if (currentPane && sessions.length > 0 && !currentSession) {
+      const pane = findPane(currentPane);
+      if (pane) {
+        setCurrentSession(pane.sessionName);
+      }
+    }
+  }, [currentPane, sessions, currentSession, findPane]);
+
+  // Update document title
+  useEffect(() => {
+    if (currentPane) {
+      const pane = findPane(currentPane);
+      const process = pane?.process || "pane";
+      document.title = `${process} - ${currentPane}`;
+    } else {
+      document.title = "MuxTunnel";
+    }
+  }, [currentPane, findPane]);
 
   // Select a pane
   const handleSelectPane = useCallback(
