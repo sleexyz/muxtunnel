@@ -56,3 +56,27 @@ Codebase-specific truths about MuxTunnel.
 - Returns pixel dimensions per character cell
 - Used by FitAddon internally; same approach works for cropping
 - Must wait for terminal to render before dimensions are available
+
+## css-pane-cropping
+**How CSS cropping works for pane isolation**
+- Terminal renders at full session size (e.g., 181×61)
+- `overflow: hidden` on crop-container clips to pane dimensions
+- `transform: translate(-left, -top)` shifts terminal to show correct region
+- Pane switching within same session is CSS-only (instant, no reconnect)
+- Session switching requires new PTY connection
+
+## tmux-pane-coordinates
+**tmux pane_left/pane_top already account for borders**
+- Vertical split: left pane cols 0-88, border at 89, right pane starts at 90
+- `pane_left=90` means content starts at column 90 (after border)
+- No additional border offset needed when cropping
+- Session dimensions via: `tmux display-message -t SESSION -p "#{window_width}:#{window_height}"`
+
+## xterm-mouse-with-css-crop
+**Mouse coordinates work automatically with CSS cropping**
+- xterm.js canvas is full session size
+- CSS transform positions it so pane region is visible
+- Clicks hit the actual canvas at session-relative coordinates
+- xterm.js reports correct coordinates—no translation needed!
+- SGR mouse format: `\x1b[<code;col;row;M` (press) or `\x1b[<code;col;row;m` (release)
+- DEFAULT mouse format: `\x1b[M<byte><byte><byte>` (code+32, col+32, row+32)
