@@ -175,6 +175,27 @@ export function getPaneCwd(paneTarget: string): string | null {
   }
 }
 
+/**
+ * Check if a Claude pane is actively processing by detecting orange thinking status
+ * Claude Code thinking indicator: [orange]spinner [salmon]Verbing…[/salmon]
+ */
+export function isPaneProcessing(paneTarget: string): boolean {
+  try {
+    // Capture last 10 lines with escape sequences
+    const output = execSync(`tmux capture-pane -t "${paneTarget}" -p -e -S -10`, {
+      encoding: "utf-8",
+    });
+
+    // Orange/salmon color range used by Claude Code thinking status
+    const thinkingColor = /\x1b\[38;2;(2[0-3][0-9]);(1[0-5][0-9]);([89][0-9]|1[0-2][0-9])m/;
+
+    // Key: thinking status always has ellipsis "…" (distinguishes from "config (0:0)" etc)
+    return thinkingColor.test(output) && output.includes("…");
+  } catch {
+    return false;
+  }
+}
+
 // Track previous status for change detection
 const previousStatus = new Map<string, string>();
 
@@ -187,6 +208,11 @@ function checkAndNotify(sessionId: string, fullPath: string): void {
   const prevStatus = previousStatus.get(sessionId);
   const state = notificationState.get(sessionId) || { notified: false, viewedAt: null };
 
+  // Reset viewedAt when a new turn starts (status leaves "done")
+  if (prevStatus === "done" && status !== "done") {
+    state.viewedAt = null;
+  }
+
   // Detect transition to "done"
   if (prevStatus === "thinking" && status === "done") {
     console.log(`Claude session ${sessionId} completed`);
@@ -197,7 +223,8 @@ function checkAndNotify(sessionId: string, fullPath: string): void {
 
   // Also notify if session is "done" and hasn't been notified yet
   // (handles case where server starts after Claude finished)
-  if (status === "done" && !state.notified) {
+  // But don't re-notify if user already viewed it while in "done" state
+  if (status === "done" && !state.notified && !state.viewedAt) {
     console.log(`Claude session ${sessionId} needs attention (done)`);
     state.notified = true;
     notificationState.set(sessionId, state);
