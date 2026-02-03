@@ -105,7 +105,7 @@ function renderSessionsList(sessions: TmuxSession[]) {
         const claudeStatus = claude?.status;
 
         html += `
-          <div class="pane-item ${isSelected ? "selected" : ""}" data-target="${escapeHtml(pane.target)}"${claude ? ` data-claude-session="${escapeHtml(claude.sessionId)}"` : ""}>
+          <div class="pane-item ${isSelected ? "selected" : ""} ${hasNotification ? "needs-attention" : ""}" data-target="${escapeHtml(pane.target)}"${claude ? ` data-claude-session="${escapeHtml(claude.sessionId)}"` : ""}>
             <span class="pane-info">
               ${hasNotification ? `<span class="notification-dot"></span>` : ""}
               <span class="pane-id">${window.index}:${pane.paneIndex}</span>
