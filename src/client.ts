@@ -403,7 +403,13 @@ function selectPane(target: string) {
 
   // Update UI
   sessionsList.querySelectorAll(".pane-item").forEach((el) => {
-    el.classList.toggle("selected", el.getAttribute("data-target") === target);
+    const isTarget = el.getAttribute("data-target") === target;
+    el.classList.toggle("selected", isTarget);
+    // Immediately clear notification styling when selected
+    if (isTarget) {
+      el.classList.remove("needs-attention");
+      el.querySelector(".notification-dot")?.remove();
+    }
   });
 
   if (needsReconnect) {

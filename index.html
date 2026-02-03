@@ -76,14 +76,16 @@
         align-items: center;
         gap: 8px;
         overflow: hidden;
+        position: relative;
       }
       .notification-dot {
-        width: 8px;
-        height: 8px;
-        background: #fff;
+        position: absolute;
+        left: -12px;
+        width: 6px;
+        height: 6px;
+        background: #da7756;
         border-radius: 50%;
-        flex-shrink: 0;
-        box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+        opacity: 0.9;
       }
       .pane-item.needs-attention .pane-id {
         color: #f0a050;
