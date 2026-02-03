@@ -47,7 +47,6 @@ let cellDimensions: { width: number; height: number } | null = null;
 // DOM elements
 const sessionsList = document.getElementById("sessions-list")!;
 const terminalContainer = document.getElementById("terminal")!;
-const terminalHeader = document.getElementById("terminal-header")!;
 const cropContainer = document.getElementById("crop-container")!;
 const terminalPositioner = document.getElementById("terminal-positioner")!;
 
@@ -326,7 +325,7 @@ function connectToSession(sessionName: string, initialPaneTarget: string) {
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
-    terminalHeader.textContent = currentPane || sessionName;
+    // Connected
   };
 
   ws.onmessage = (event) => {
@@ -389,8 +388,6 @@ function selectPane(target: string) {
     el.classList.toggle("selected", el.getAttribute("data-target") === target);
   });
 
-  terminalHeader.textContent = target;
-
   if (needsReconnect) {
     // Different session - need to reconnect
     initTerminal(newSessionName);
@@ -425,8 +422,6 @@ function selectSession(sessionName: string) {
   sessionsList.querySelectorAll(".session-name").forEach((el) => {
     el.classList.toggle("selected", el.getAttribute("data-session") === sessionName);
   });
-
-  terminalHeader.textContent = sessionName;
 
   if (needsReconnect) {
     // Different session - need to reconnect
