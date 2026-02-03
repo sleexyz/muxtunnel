@@ -44,6 +44,7 @@ export function createPtySession(options: PtySessionOptions): PtySession {
   const emitter = new EventEmitter() as PtySession;
 
   // Build environment for proper terminal emulation
+  // Explicitly set locale for UTF-8 support - launchd doesn't provide these
   const env: Record<string, string> = {
     ...Object.fromEntries(
       Object.entries(process.env).filter(
@@ -52,6 +53,8 @@ export function createPtySession(options: PtySessionOptions): PtySession {
     ),
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
+    LANG: process.env.LANG || "en_US.UTF-8",
+    LC_ALL: process.env.LC_ALL || "en_US.UTF-8",
   };
 
   // Create PTY that runs tmux attach-session
