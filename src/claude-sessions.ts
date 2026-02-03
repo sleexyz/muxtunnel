@@ -64,18 +64,25 @@ function getSessionStatus(jsonlPath: string): "thinking" | "done" | "idle" {
     try {
       const msg = JSON.parse(lastLine);
 
+      // "summary" type means conversation turn is complete
+      if (msg.type === "summary") {
+        return "done";
+      }
+
+      // "user" message means Claude is about to respond (or waiting for tool result)
       if (msg.type === "user") {
-        // User message means Claude is processing or waiting for tool result
         return "thinking";
       }
 
+      // "assistant" message - check if file was recently modified (still streaming)
       if (msg.type === "assistant") {
-        // Check stop_reason
-        const stopReason = msg.message?.stop_reason;
-        if (stopReason === null || stopReason === undefined) {
-          return "thinking"; // Still streaming
+        const mtime = stats.mtimeMs;
+        const now = Date.now();
+        // If modified in last 3 seconds, probably still streaming
+        if (now - mtime < 3000) {
+          return "thinking";
         }
-        return "done"; // Completed response
+        return "done";
       }
 
       return "idle";
@@ -110,6 +117,9 @@ export function getSessionsForProject(projectPath: string): ClaudeSession[] {
     return index.entries
       .filter(entry => entry.projectPath === projectPath)
       .map(entry => {
+        // Check and potentially trigger notification
+        checkAndNotify(entry.sessionId, entry.fullPath);
+
         const status = getSessionStatus(entry.fullPath);
         const state = notificationState.get(entry.sessionId) || { notified: false, viewedAt: null };
 
@@ -169,6 +179,34 @@ export function getPaneCwd(paneTarget: string): string | null {
 const previousStatus = new Map<string, string>();
 
 /**
+ * Check if a session should trigger a notification
+ * This is called both on file change and when first accessing a session
+ */
+function checkAndNotify(sessionId: string, fullPath: string): void {
+  const status = getSessionStatus(fullPath);
+  const prevStatus = previousStatus.get(sessionId);
+  const state = notificationState.get(sessionId) || { notified: false, viewedAt: null };
+
+  // Detect transition to "done"
+  if (prevStatus === "thinking" && status === "done") {
+    console.log(`Claude session ${sessionId} completed`);
+    state.notified = true;
+    notificationState.set(sessionId, state);
+    sessionEvents.emit("completed", sessionId);
+  }
+
+  // Also notify if session is "done" and hasn't been notified yet
+  // (handles case where server starts after Claude finished)
+  if (status === "done" && !state.notified) {
+    console.log(`Claude session ${sessionId} needs attention (done)`);
+    state.notified = true;
+    notificationState.set(sessionId, state);
+  }
+
+  previousStatus.set(sessionId, status);
+}
+
+/**
  * Start watching for Claude session changes
  */
 export function startWatching(): void {
@@ -189,23 +227,6 @@ export function startWatching(): void {
     const sessionId = path.basename(filename, ".jsonl");
     const fullPath = path.join(CLAUDE_PROJECTS_DIR, filename);
 
-    // Check status
-    const status = getSessionStatus(fullPath);
-    const prevStatus = previousStatus.get(sessionId);
-
-    // Detect transition to "done"
-    if (prevStatus === "thinking" && status === "done") {
-      console.log(`Claude session ${sessionId} completed`);
-
-      // Set notification flag
-      const state = notificationState.get(sessionId) || { notified: false, viewedAt: null };
-      state.notified = true;
-      notificationState.set(sessionId, state);
-
-      // Emit event
-      sessionEvents.emit("completed", sessionId);
-    }
-
-    previousStatus.set(sessionId, status);
+    checkAndNotify(sessionId, fullPath);
   });
 }
