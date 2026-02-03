@@ -4,27 +4,61 @@ import { TerminalView } from "./components/TerminalView";
 import { InputBar } from "./components/InputBar";
 import type { TmuxSession, TmuxPane } from "./types";
 
+// Get session from URL query param
+function getSessionFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("session");
+}
+
 // Get pane from URL query param
 function getPaneFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
   return params.get("pane");
 }
 
+// Convert full pane target to relative (e.g., "main:0.0" -> "0.0")
+function paneToRelative(pane: string): string {
+  const colonIndex = pane.indexOf(":");
+  return colonIndex >= 0 ? pane.slice(colonIndex + 1) : pane;
+}
+
+// Convert relative pane to full target (e.g., "0.0" + "main" -> "main:0.0")
+function paneToAbsolute(pane: string, session: string): string {
+  return pane.includes(":") ? pane : `${session}:${pane}`;
+}
+
 // Update URL without refresh
-function updateUrl(pane: string | null) {
+function updateUrl(session: string | null, pane: string | null) {
   const url = new URL(window.location.href);
+  if (session) {
+    url.searchParams.set("session", session);
+  } else {
+    url.searchParams.delete("session");
+  }
   if (pane) {
-    url.searchParams.set("pane", pane);
+    // Store pane as relative when session is present
+    url.searchParams.set("pane", session ? paneToRelative(pane) : pane);
   } else {
     url.searchParams.delete("pane");
   }
   window.history.pushState({}, "", url.toString());
 }
 
+// Read initial state from URL (pane converted to absolute if needed)
+function getInitialState(): { session: string | null; pane: string | null } {
+  const session = getSessionFromUrl();
+  const pane = getPaneFromUrl();
+  return {
+    session,
+    pane: pane && session ? paneToAbsolute(pane, session) : pane,
+  };
+}
+
 export function App() {
+  const initialState = getInitialState();
   const [sessions, setSessions] = useState<TmuxSession[]>([]);
-  const [currentPane, setCurrentPane] = useState<string | null>(getPaneFromUrl);
-  const [currentSession, setCurrentSession] = useState<string | null>(null);
+  const [currentPane, setCurrentPane] = useState<string | null>(initialState.pane);
+  const [currentSession, setCurrentSession] = useState<string | null>(initialState.session);
   const wsRef = useRef<WebSocket | null>(null);
 
   // Fetch sessions
@@ -54,21 +88,23 @@ export function App() {
   useEffect(() => {
     const handlePopState = () => {
       isPopStateRef.current = true;
+      const session = getSessionFromUrl();
       const pane = getPaneFromUrl();
-      setCurrentPane(pane);
+      setCurrentSession(session);
+      setCurrentPane(pane && session ? paneToAbsolute(pane, session) : pane);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Update URL when pane changes (skip on popstate-triggered changes)
+  // Update URL when session or pane changes (skip on popstate-triggered changes)
   useEffect(() => {
     if (isPopStateRef.current) {
       isPopStateRef.current = false;
       return;
     }
-    updateUrl(currentPane);
-  }, [currentPane]);
+    updateUrl(currentSession, currentPane);
+  }, [currentSession, currentPane]);
 
   // Find pane by target
   const findPane = useCallback(
@@ -95,15 +131,21 @@ export function App() {
     [sessions]
   );
 
-  // Sync currentSession from URL pane when sessions load
+  // Auto-select first session when none selected and sessions are available
   useEffect(() => {
-    if (currentPane && sessions.length > 0 && !currentSession) {
-      const pane = findPane(currentPane);
-      if (pane) {
-        setCurrentSession(pane.sessionName);
+    if (sessions.length > 0 && !currentSession) {
+      // If there's a pane in URL, derive session from it
+      if (currentPane) {
+        const pane = findPane(currentPane);
+        if (pane) {
+          setCurrentSession(pane.sessionName);
+          return;
+        }
       }
+      // Otherwise auto-select first session
+      setCurrentSession(sessions[0].name);
     }
-  }, [currentPane, sessions, currentSession, findPane]);
+  }, [sessions, currentSession, currentPane, findPane]);
 
   // Update document title
   useEffect(() => {
@@ -111,10 +153,12 @@ export function App() {
       const pane = findPane(currentPane);
       const process = pane?.process || "pane";
       document.title = `${process} - ${currentPane}`;
+    } else if (currentSession) {
+      document.title = `${currentSession} - MuxTunnel`;
     } else {
       document.title = "MuxTunnel";
     }
-  }, [currentPane, findPane]);
+  }, [currentPane, currentSession, findPane]);
 
   // Select a pane
   const handleSelectPane = useCallback(
