@@ -4,6 +4,13 @@ import "@xterm/xterm/css/xterm.css";
 
 // Note: FitAddon removed - terminal size is fixed to session dimensions
 
+interface ClaudeSession {
+  sessionId: string;
+  summary: string;
+  status: "thinking" | "done" | "idle";
+  notified: boolean;
+}
+
 interface TmuxPane {
   sessionName: string;
   windowIndex: number;
@@ -22,6 +29,8 @@ interface TmuxPane {
   process: string;
   needsAttention?: boolean;
   attentionReason?: string;
+  // Claude session info (if process is claude)
+  claudeSession?: ClaudeSession;
 }
 
 interface TmuxWindow {
@@ -91,12 +100,16 @@ function renderSessionsList(sessions: TmuxSession[]) {
         const isSelected = pane.target === currentPane;
         const hasAttention = pane.needsAttention;
         const processName = pane.process || "";
+        const claude = pane.claudeSession;
+        const hasNotification = claude?.notified;
+        const claudeStatus = claude?.status;
 
         html += `
-          <div class="pane-item ${isSelected ? "selected" : ""}" data-target="${escapeHtml(pane.target)}">
+          <div class="pane-item ${isSelected ? "selected" : ""}" data-target="${escapeHtml(pane.target)}"${claude ? ` data-claude-session="${escapeHtml(claude.sessionId)}"` : ""}>
             <span class="pane-info">
+              ${hasNotification ? `<span class="notification-dot"></span>` : ""}
               <span class="pane-id">${window.index}:${pane.paneIndex}</span>
-              <span class="pane-process">${escapeHtml(processName)}</span>
+              <span class="pane-process">${escapeHtml(processName)}${claudeStatus === "thinking" ? " ..." : ""}</span>
             </span>
             <span class="pane-actions">
               ${hasAttention ? `<span class="attention-badge">!</span>` : ""}
@@ -383,6 +396,11 @@ function selectPane(target: string) {
 
   currentPane = target;
 
+  // Clear Claude notification if this pane has one
+  if (pane.claudeSession?.notified) {
+    markClaudeSessionViewed(pane.claudeSession.sessionId);
+  }
+
   // Update UI
   sessionsList.querySelectorAll(".pane-item").forEach((el) => {
     el.classList.toggle("selected", el.getAttribute("data-target") === target);
@@ -485,6 +503,19 @@ async function closePane(target: string) {
     await refreshSessions();
   } catch (err) {
     console.error("Failed to close pane:", err);
+  }
+}
+
+/**
+ * Mark a Claude session as viewed (clears notification)
+ */
+async function markClaudeSessionViewed(sessionId: string) {
+  try {
+    await fetch(`/api/claude-sessions/${encodeURIComponent(sessionId)}/viewed`, {
+      method: "POST",
+    });
+  } catch (err) {
+    console.error("Failed to mark session viewed:", err);
   }
 }
 

@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { listSessions, capturePane, getPaneInfo, isTmuxRunning, getSessionDimensions, killPane } from "./tmux.js";
 import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
+import { getActiveSession, getPaneCwd, markSessionViewed, startWatching as startClaudeWatching } from "./claude-sessions.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const HOST = process.env.HOST || "localhost";
@@ -25,12 +26,12 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
- * Get sessions with attention state and dimensions
+ * Get sessions with attention state, dimensions, and Claude session info
  */
 function getSessionsWithAttention() {
   const sessions = listSessions();
 
-  // Add attention detection and dimensions to each session
+  // Add attention detection, dimensions, and Claude session info to each session
   for (const session of sessions) {
     // Get session dimensions
     const dimensions = getSessionDimensions(session.name);
@@ -47,6 +48,17 @@ function getSessionsWithAttention() {
           (pane as any).attentionReason = attention.reason;
         } catch {
           (pane as any).needsAttention = false;
+        }
+
+        // If this pane is running Claude, get session info
+        if (pane.process === "claude") {
+          const cwd = getPaneCwd(pane.target);
+          if (cwd) {
+            const claudeSession = getActiveSession(cwd);
+            if (claudeSession) {
+              (pane as any).claudeSession = claudeSession;
+            }
+          }
         }
       }
     }
@@ -137,6 +149,16 @@ const server = http.createServer((req, res) => {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
     }
+    return;
+  }
+
+  // POST /api/claude-sessions/:id/viewed - mark session as viewed
+  const claudeMatch = url.pathname.match(/^\/api\/claude-sessions\/([^/]+)\/viewed$/);
+  if (claudeMatch && req.method === "POST") {
+    const sessionId = decodeURIComponent(claudeMatch[1]);
+    markSessionViewed(sessionId);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ success: true }));
     return;
   }
 
@@ -278,6 +300,9 @@ server.on("upgrade", (req, socket, head) => {
     socket.destroy();
   }
 });
+
+// Start Claude session watching
+startClaudeWatching();
 
 // Start server
 server.listen(PORT, HOST, () => {
