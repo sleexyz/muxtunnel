@@ -1,11 +1,12 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { execSync } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { listSessions, capturePane, getPaneInfo, isTmuxRunning, getSessionDimensions, killPane } from "./tmux.js";
 import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
-import { getActiveSession, getPaneCwd, markSessionViewed, startWatching as startClaudeWatching } from "./claude-sessions.js";
+import { getActiveSession, getPaneCwd, markSessionViewed, startWatching as startClaudeWatching, isPaneProcessing } from "./claude-sessions.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const HOST = process.env.HOST || "localhost";
@@ -56,6 +57,10 @@ function getSessionsWithAttention() {
           if (cwd) {
             const claudeSession = getActiveSession(cwd);
             if (claudeSession) {
+              // Override status if pane shows active processing (orange text)
+              if (isPaneProcessing(pane.target)) {
+                claudeSession.status = "thinking";
+              }
               (pane as any).claudeSession = claudeSession;
             }
           }
@@ -138,11 +143,53 @@ const server = http.createServer((req, res) => {
   }
 
   // DELETE /api/panes/:target - kill a pane
-  const paneMatch = url.pathname.match(/^\/api\/panes\/(.+)$/);
-  if (paneMatch && req.method === "DELETE") {
-    const target = decodeURIComponent(paneMatch[1]);
+  const paneDeleteMatch = url.pathname.match(/^\/api\/panes\/([^/]+)$/);
+  if (paneDeleteMatch && req.method === "DELETE") {
+    const target = decodeURIComponent(paneDeleteMatch[1]);
     try {
       killPane(target);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // POST /api/panes/:target/input - send text input to pane
+  const paneInputMatch = url.pathname.match(/^\/api\/panes\/([^/]+)\/input$/);
+  if (paneInputMatch && req.method === "POST") {
+    const target = decodeURIComponent(paneInputMatch[1]);
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const { text } = JSON.parse(body);
+        if (typeof text !== "string") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "text is required" }));
+          return;
+        }
+        // Send keys to tmux pane
+        execSync(`tmux send-keys -t ${JSON.stringify(target)} -l ${JSON.stringify(text)}`);
+        execSync(`tmux send-keys -t ${JSON.stringify(target)} Enter`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/panes/:target/interrupt - send Ctrl+C to pane
+  const paneInterruptMatch = url.pathname.match(/^\/api\/panes\/([^/]+)\/interrupt$/);
+  if (paneInterruptMatch && req.method === "POST") {
+    const target = decodeURIComponent(paneInterruptMatch[1]);
+    try {
+      execSync(`tmux send-keys -t ${JSON.stringify(target)} C-c`);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true }));
     } catch (err) {
