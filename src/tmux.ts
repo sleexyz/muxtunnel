@@ -194,6 +194,36 @@ export function resizePane(target: string, cols: number, rows: number): void {
 }
 
 /**
+ * Get the dimensions of a session's current window
+ * Returns the full window size (width x height in characters)
+ */
+export function getSessionDimensions(sessionName: string): { width: number; height: number } | null {
+  if (!isTmuxRunning()) {
+    return null;
+  }
+
+  try {
+    const output = execSync(
+      `tmux display-message -t "${sessionName}" -p "#{window_width}:#{window_height}"`,
+      { encoding: "utf-8" }
+    ).trim();
+
+    const [widthStr, heightStr] = output.split(":");
+    const width = parseInt(widthStr, 10);
+    const height = parseInt(heightStr, 10);
+
+    if (isNaN(width) || isNaN(height)) {
+      return null;
+    }
+
+    return { width, height };
+  } catch (err) {
+    console.error(`Failed to get session dimensions for ${sessionName}:`, err);
+    return null;
+  }
+}
+
+/**
  * Get detailed info about a specific pane
  */
 export function getPaneInfo(target: string): TmuxPane | null {

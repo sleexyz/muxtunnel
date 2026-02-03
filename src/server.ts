@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { listSessions, capturePane, getPaneInfo, isTmuxRunning } from "./tmux.js";
+import { listSessions, capturePane, getPaneInfo, isTmuxRunning, getSessionDimensions } from "./tmux.js";
 import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
 
@@ -25,13 +25,19 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
- * Get sessions with attention state
+ * Get sessions with attention state and dimensions
  */
 function getSessionsWithAttention() {
   const sessions = listSessions();
 
-  // Add attention detection to each pane
+  // Add attention detection and dimensions to each session
   for (const session of sessions) {
+    // Get session dimensions
+    const dimensions = getSessionDimensions(session.name);
+    if (dimensions) {
+      (session as any).dimensions = dimensions;
+    }
+
     for (const window of session.windows) {
       for (const pane of window.panes) {
         try {

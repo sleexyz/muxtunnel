@@ -1,7 +1,8 @@
 import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
+
+// Note: FitAddon removed - terminal size is fixed to session dimensions
 
 interface TmuxPane {
   sessionName: string;
@@ -29,12 +30,13 @@ interface TmuxWindow {
 interface TmuxSession {
   name: string;
   windows: TmuxWindow[];
+  dimensions?: { width: number; height: number };
 }
 
 let terminal: Terminal | null = null;
-let fitAddon: FitAddon | null = null;
 let ws: WebSocket | null = null;
 let currentPane: string | null = null;
+let currentSession: string | null = null;
 let sessionsRefreshInterval: number | null = null;
 let sessionsData: TmuxSession[] = [];
 let cellDimensions: { width: number; height: number } | null = null;
@@ -62,6 +64,7 @@ async function fetchSessions(): Promise<TmuxSession[]> {
 
 /**
  * Render the sessions list in the sidebar
+ * Uses event delegation to avoid handler duplication issues
  */
 function renderSessionsList(sessions: TmuxSession[]) {
   if (sessions.length === 0) {
@@ -98,15 +101,22 @@ function renderSessionsList(sessions: TmuxSession[]) {
   }
 
   sessionsList.innerHTML = html;
+  // Note: Click handling is done via event delegation in setupEventDelegation()
+}
 
-  // Add click handlers
-  sessionsList.querySelectorAll(".pane-item").forEach((el) => {
-    el.addEventListener("click", () => {
-      const target = el.getAttribute("data-target");
-      if (target && target !== currentPane) {
-        selectPane(target);
+/**
+ * Setup event delegation for sidebar clicks (called once at init)
+ */
+function setupEventDelegation() {
+  sessionsList.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const paneItem = target.closest(".pane-item");
+    if (paneItem) {
+      const paneTarget = paneItem.getAttribute("data-target");
+      if (paneTarget && paneTarget !== currentPane) {
+        selectPane(paneTarget);
       }
-    });
+    }
   });
 }
 
@@ -122,16 +132,29 @@ function escapeHtml(str: string): string {
 }
 
 /**
- * Initialize or reset the terminal
+ * Initialize or reset the terminal with fixed session dimensions
+ * @param sessionName - name of the session to get dimensions from
  */
-function initTerminal() {
+function initTerminal(sessionName: string) {
+  // Get session dimensions
+  const session = sessionsData.find(s => s.name === sessionName);
+  if (!session?.dimensions) {
+    console.error(`No dimensions for session ${sessionName}`);
+    return;
+  }
+
+  const { width: cols, height: rows } = session.dimensions;
+
   // Clear existing terminal
   if (terminal) {
     terminal.dispose();
   }
   terminalContainer.innerHTML = "";
 
+  // Create terminal at FIXED session size (no FitAddon!)
   terminal = new Terminal({
+    cols,
+    rows,
     cursorBlink: true,
     fontSize: 14,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -143,9 +166,6 @@ function initTerminal() {
     },
   });
 
-  fitAddon = new FitAddon();
-  terminal.loadAddon(fitAddon);
-
   // Try WebGL addon for better performance
   try {
     terminal.loadAddon(new WebglAddon());
@@ -154,17 +174,32 @@ function initTerminal() {
   }
 
   terminal.open(terminalContainer);
-  fitAddon.fit();
 
-  // Capture cell dimensions after render (accessing private API as FitAddon does)
-  // Use requestAnimationFrame to ensure render is complete
+  // Set explicit dimensions on the terminal container to prevent xterm.js
+  // from being constrained by the crop-container's smaller size.
+  // This is calculated after the terminal is opened so we have cell dimensions.
+  requestAnimationFrame(() => {
+    if (terminal) {
+      const core = (terminal as any)._core;
+      if (core?._renderService?.dimensions?.css?.cell) {
+        const dims = core._renderService.dimensions.css.cell;
+        const fullWidth = cols * dims.width;
+        const fullHeight = rows * dims.height;
+        terminalContainer.style.width = `${fullWidth}px`;
+        terminalContainer.style.height = `${fullHeight}px`;
+        terminalPositioner.style.width = `${fullWidth}px`;
+        terminalPositioner.style.height = `${fullHeight}px`;
+      }
+    }
+  });
+
+  // Capture cell dimensions after render
   requestAnimationFrame(() => {
     if (terminal) {
       const core = (terminal as any)._core;
       if (core?._renderService?.dimensions?.css?.cell) {
         const dims = core._renderService.dimensions.css.cell;
         cellDimensions = { width: dims.width, height: dims.height };
-        console.log("Cell dimensions:", cellDimensions);
         // If we have a current pane, apply crop now that we have dimensions
         if (currentPane) {
           applyCropForPane(currentPane);
@@ -173,37 +208,12 @@ function initTerminal() {
     }
   });
 
-  // Handle window resize
-  window.addEventListener("resize", () => {
-    if (fitAddon) {
-      fitAddon.fit();
-      // Re-capture cell dimensions after resize
-      if (terminal) {
-        const core = (terminal as any)._core;
-        if (core?._renderService?.dimensions?.css?.cell) {
-          const dims = core._renderService.dimensions.css.cell;
-          cellDimensions = { width: dims.width, height: dims.height };
-          // Re-apply crop with new dimensions
-          if (currentPane) {
-            applyCropForPane(currentPane);
-          }
-        }
-      }
-      // Send resize to server
-      if (ws && ws.readyState === WebSocket.OPEN && terminal) {
-        ws.send(JSON.stringify({
-          type: "resize",
-          cols: terminal.cols,
-          rows: terminal.rows,
-        }));
-      }
-    }
-  });
-
   // Handle user input
   terminal.onData((data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      // Send as literal keys
+      // With CSS cropping, mouse coordinates are already in session-relative coordinates
+      // (the terminal canvas is full session size, CSS just crops the view)
+      // No translation needed!
       ws.send(JSON.stringify({ type: "keys", keys: data }));
     }
   });
@@ -231,7 +241,6 @@ function findPane(target: string): TmuxPane | null {
  */
 function applyCropForPane(target: string) {
   if (!cellDimensions) {
-    console.log("Cell dimensions not available yet, skipping crop");
     return;
   }
 
@@ -241,11 +250,9 @@ function applyCropForPane(target: string) {
     return;
   }
 
-  // Account for border offset: panes not at edge have a 1-char border to their left/top
-  const borderLeftOffset = pane.left > 0 ? 1 : 0;
-  const borderTopOffset = pane.top > 0 ? 1 : 0;
-  const effectiveLeft = pane.left + borderLeftOffset;
-  const effectiveTop = pane.top + borderTopOffset;
+  // tmux pane_left/pane_top already point to where content starts (after any borders)
+  const effectiveLeft = pane.left;
+  const effectiveTop = pane.top;
 
   // Set container size to match pane dimensions (in pixels)
   cropContainer.style.width = `${pane.cols * cellDimensions.width}px`;
@@ -253,39 +260,38 @@ function applyCropForPane(target: string) {
 
   // Translate the terminal to show the correct region
   terminalPositioner.style.transform = `translate(${-effectiveLeft * cellDimensions.width}px, ${-effectiveTop * cellDimensions.height}px)`;
-
-  console.log(`Crop applied: pane=${target}, left=${effectiveLeft}, top=${effectiveTop}, size=${pane.cols}x${pane.rows}`);
 }
 
 /**
- * Connect to a pane via WebSocket with PTY attachment
+ * Connect to a session via WebSocket with PTY attachment
+ * Uses session dimensions to create PTY at full session size
  */
-function connectToPane(target: string) {
+function connectToSession(sessionName: string, initialPaneTarget: string) {
   // Close existing connection
   if (ws) {
     ws.close();
     ws = null;
   }
 
-  // Get terminal dimensions for PTY creation
-  let cols = 80;
-  let rows = 24;
-  if (terminal && fitAddon) {
-    fitAddon.fit();
-    cols = terminal.cols;
-    rows = terminal.rows;
+  // Get session dimensions
+  const session = sessionsData.find(s => s.name === sessionName);
+  if (!session?.dimensions) {
+    console.error(`No dimensions for session ${sessionName}`);
+    return;
   }
 
+  const { width: cols, height: rows } = session.dimensions;
+
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(target)}&cols=${cols}&rows=${rows}`;
+  // Connect to the session (using any pane target in that session)
+  const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(initialPaneTarget)}&cols=${cols}&rows=${rows}`;
 
   // Use binary type for efficient PTY data transfer
   ws = new WebSocket(wsUrl);
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
-    console.log(`Connected to pane: ${target} (${cols}x${rows})`);
-    terminalHeader.textContent = target;
+    terminalHeader.textContent = currentPane || sessionName;
   };
 
   ws.onmessage = (event) => {
@@ -300,11 +306,8 @@ function connectToPane(target: string) {
 
     // Handle JSON control messages
     try {
-      const data = JSON.parse(event.data);
-
-      if (data.type === "pane-info") {
-        console.log("Pane info:", data.pane);
-      }
+      JSON.parse(event.data);
+      // Control messages handled here if needed
     } catch {
       // If not JSON and not binary, try writing as text
       if (terminal && typeof event.data === "string") {
@@ -313,22 +316,37 @@ function connectToPane(target: string) {
     }
   };
 
-  ws.onclose = (event) => {
-    console.log(`Disconnected from pane: ${target}`, event.code, event.reason);
+  ws.onclose = () => {
     if (terminal) {
       terminal.write("\r\n\x1b[31m[Connection closed]\x1b[0m\r\n");
     }
+    // Note: Don't reset currentSession here - it's set in connectToSession
+    // and we don't want an intentional disconnect (for switching sessions)
+    // to reset it prematurely
   };
 
   ws.onerror = (err) => {
     console.error("WebSocket error:", err);
   };
+
+  currentSession = sessionName;
 }
 
 /**
  * Select a pane to view
+ * Only reconnects PTY when switching to a different SESSION
+ * Pane switching within same session is CSS-only (instant)
  */
 function selectPane(target: string) {
+  const pane = findPane(target);
+  if (!pane) {
+    console.error(`Pane ${target} not found`);
+    return;
+  }
+
+  const newSessionName = pane.sessionName;
+  const needsReconnect = currentSession !== newSessionName;
+
   currentPane = target;
 
   // Update UI
@@ -338,18 +356,18 @@ function selectPane(target: string) {
 
   terminalHeader.textContent = target;
 
-  // Initialize terminal if needed, or clear for new connection
-  if (!terminal) {
-    initTerminal();
+  if (needsReconnect) {
+    // Different session - need to reconnect
+    initTerminal(newSessionName);
+    connectToSession(newSessionName, target);
   } else {
-    // Clear terminal for new PTY connection
-    terminal.clear();
-    // Apply crop for the selected pane
+    // Same session - just update CSS crop (instant!)
     applyCropForPane(target);
   }
 
-  // Connect to the pane
-  connectToPane(target);
+  // Note: Input goes to whichever pane tmux has active.
+  // User can switch active pane using tmux prefix + arrow keys.
+  // Future: could add API to sync pane focus via tmux select-pane
 }
 
 /**
@@ -365,6 +383,9 @@ async function refreshSessions() {
  * Initialize the app
  */
 async function init() {
+  // Setup event delegation (once)
+  setupEventDelegation();
+
   // Initial fetch
   await refreshSessions();
 

@@ -41,6 +41,7 @@ Codebase-specific truths about MuxTunnel.
 - Bidirectional: PTY output streams to WebSocket, input forwards to PTY stdin
 - This is how proper web terminals (ttyd, gotty, wetty) work
 - **Critical:** tmux client and server versions must match (see HEURISTICS#tmux-version-mismatch)
+- **For pane cropping:** PTY must match session dimensions exactly, or tmux resizes and invalidates pane geometry
 
 ## pane-geometry
 **tmux pane geometry for cropping**

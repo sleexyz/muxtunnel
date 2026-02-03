@@ -86,14 +86,14 @@
       #terminal-wrapper {
         flex: 1;
         overflow: hidden;
-        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       /* Crop container clips to show only selected pane */
       #crop-container {
         overflow: hidden;
-        position: absolute;
-        top: 0;
-        left: 0;
+        position: relative;
       }
       /* Positioner shifts terminal to show correct region */
       #terminal-positioner {
