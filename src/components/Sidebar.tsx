@@ -35,7 +35,6 @@ function getAllPanes(session: TmuxSession): TmuxPane[] {
 
 type DotKind =
   | "normal"
-  | "claude-active"
   | "claude-thinking"
   | "claude-done"
   | "attention"
@@ -48,10 +47,8 @@ function getDotKind(pane: TmuxPane): DotKind {
   if (isClaude && needsAttention) return "claude-attention";
   if (needsAttention) return "attention";
   if (isClaude) {
-    const status = pane.claudeSession?.status;
-    if (status === "thinking") return "claude-thinking";
-    if (pane.claudeSession?.notified) return "claude-done";
-    return "claude-active";
+    if (pane.claudeSession?.status === "thinking") return "claude-thinking";
+    return "claude-done";
   }
   return "normal";
 }
@@ -61,8 +58,6 @@ function dotClassName(kind: DotKind): string {
   switch (kind) {
     case "normal":
       return base;
-    case "claude-active":
-      return `${base} dot-claude`;
     case "claude-thinking":
       return `${base} dot-claude dot-thinking`;
     case "claude-done":

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Sidebar } from "./components/Sidebar";
+import { WorkspaceBar } from "./components/WorkspaceBar";
 import { TerminalView } from "./components/TerminalView";
 import { InputBar } from "./components/InputBar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -380,6 +381,14 @@ export function App() {
         onReorder={(from, to) => reorder(orderedSessions, from, to)}
       />
       <div id="terminal-container">
+        <WorkspaceBar
+          sessions={orderedSessions}
+          currentPane={currentPane}
+          currentSession={currentSession}
+          onSelectPane={handleSelectPane}
+          onSelectSession={handleSelectSession}
+          onMarkViewed={handleMarkViewed}
+        />
         <TerminalView
           session={session}
           currentPane={currentPane}

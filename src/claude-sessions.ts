@@ -72,9 +72,16 @@ function getSessionStatus(jsonlPath: string): "thinking" | "done" | "idle" {
         return "done";
       }
 
-      // "user" message means Claude is about to respond (or waiting for tool result)
+      // "user" message means Claude is about to respond — but only if recent.
+      // If the file hasn't been modified in over 60s, the session was likely
+      // interrupted and Claude is not actually thinking.
       if (msg.type === "user") {
-        return "thinking";
+        const mtime = stats.mtimeMs;
+        const now = Date.now();
+        if (now - mtime < 60000) {
+          return "thinking";
+        }
+        return "done";
       }
 
       // "assistant" message - check if file was recently modified (still streaming)
