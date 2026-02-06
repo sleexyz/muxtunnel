@@ -5,6 +5,7 @@ interface SidebarProps {
   sessions: TmuxSession[];
   currentPane: string | null;
   currentSession: string | null;
+  pinned: boolean;
   onSelectPane: (target: string) => void;
   onSelectSession: (sessionName: string) => void;
   onClosePane: (target: string) => void;
@@ -23,6 +24,7 @@ export function Sidebar({
   sessions,
   currentPane,
   currentSession,
+  pinned,
   onSelectPane,
   onSelectSession,
   onClosePane,
@@ -30,7 +32,7 @@ export function Sidebar({
 }: SidebarProps) {
   if (sessions.length === 0) {
     return (
-      <div id="sidebar">
+      <div id="sidebar" className={pinned ? "pinned" : ""}>
         <div style={{ color: "#888", padding: "12px", fontSize: "13px" }}>
           No tmux sessions found.
           <br />
@@ -43,14 +45,15 @@ export function Sidebar({
 
   const sidebarRef = useRef<HTMLDivElement>(null);
 
-  // Collapse sidebar by disabling pointer-events until transition finishes
+  // Collapse sidebar by briefly disabling pointer-events so the
+  // mouse-leave fires immediately and the sidebar hides.
   const collapseSidebar = () => {
     const el = sidebarRef.current;
     if (!el) return;
     el.style.pointerEvents = "none";
     setTimeout(() => {
       el.style.pointerEvents = "";
-    }, 300);
+    }, 100);
   };
 
   const handlePaneClick = (pane: TmuxPane) => {
@@ -60,13 +63,13 @@ export function Sidebar({
         onMarkViewed(pane.claudeSession.sessionId);
       }
     }
-    collapseSidebar();
+    if (!pinned) collapseSidebar();
   };
 
   return (
-    <div id="sidebar" ref={sidebarRef}>
+    <div id="sidebar" className={pinned ? "pinned" : ""} ref={sidebarRef}>
       <div id="sessions-list">
-        {sessions.map((session) => {
+        {[...sessions].sort((a, b) => (b.activity ?? 0) - (a.activity ?? 0)).map((session) => {
           const isSessionSelected =
             currentSession === session.name && currentPane === null;
 
@@ -74,7 +77,7 @@ export function Sidebar({
             <div className="session-group" key={session.name}>
               <div
                 className={`session-name clickable ${isSessionSelected ? "selected" : ""}`}
-                onClick={() => { onSelectSession(session.name); collapseSidebar(); }}
+                onClick={() => { onSelectSession(session.name); if (!pinned) collapseSidebar(); }}
               >
                 {escapeHtml(session.name)}
               </div>

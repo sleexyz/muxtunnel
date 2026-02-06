@@ -63,6 +63,7 @@ export function App() {
   const [currentSession, setCurrentSession] = useState<string | null>(initialState.session);
   const wsRef = useRef<WebSocket | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(false);
   const settings = useSettings();
 
   // Fetch sessions
@@ -216,10 +217,23 @@ export function App() {
   // Cmd+P command palette (capture phase to bypass xterm.js)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      if (e.metaKey && !e.ctrlKey && e.key === "p") {
         e.preventDefault();
         e.stopPropagation();
         setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, []);
+
+  // Cmd+B sidebar toggle (capture phase to bypass xterm.js)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.ctrlKey && e.key === "b") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSidebarPinned((pinned) => !pinned);
       }
     };
     window.addEventListener("keydown", handler, true);
@@ -256,11 +270,12 @@ export function App() {
         onCreateSession={handleCreateSession}
         existingSessions={sessions.map((s) => ({ name: s.name, activity: s.activity, path: s.path }))}
       />
-      <div id="sidebar-trigger" />
+      {!sidebarPinned && <div id="sidebar-trigger" />}
       <Sidebar
         sessions={sessions}
         currentPane={currentPane}
         currentSession={currentSession}
+        pinned={sidebarPinned}
         onSelectPane={handleSelectPane}
         onSelectSession={handleSelectSession}
         onClosePane={handleClosePane}
@@ -274,6 +289,7 @@ export function App() {
           wsRef={wsRef}
           settings={settings}
           onRequestRefresh={fetchSessions}
+          onSessionChanged={(name) => { handleSelectSession(name); fetchSessions(); }}
         />
         {currentPane && <InputBar target={currentPane} />}
       </div>
