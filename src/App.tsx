@@ -381,14 +381,14 @@ export function App() {
         onReorder={(from, to) => reorder(orderedSessions, from, to)}
       />
       <div id="terminal-container">
-        <WorkspaceBar
+        {/* <WorkspaceBar
           sessions={orderedSessions}
           currentPane={currentPane}
           currentSession={currentSession}
           onSelectPane={handleSelectPane}
           onSelectSession={handleSelectSession}
           onMarkViewed={handleMarkViewed}
-        />
+        /> */}
         <TerminalView
           session={session}
           currentPane={currentPane}
