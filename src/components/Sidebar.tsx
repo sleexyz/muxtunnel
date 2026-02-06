@@ -43,14 +43,14 @@ export function Sidebar({
 
   const sidebarRef = useRef<HTMLDivElement>(null);
 
-  // Collapse sidebar by briefly disabling pointer-events so hover state drops
+  // Collapse sidebar by disabling pointer-events until transition finishes
   const collapseSidebar = () => {
     const el = sidebarRef.current;
     if (!el) return;
     el.style.pointerEvents = "none";
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       el.style.pointerEvents = "";
-    });
+    }, 300);
   };
 
   const handlePaneClick = (pane: TmuxPane) => {
