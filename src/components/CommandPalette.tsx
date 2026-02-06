@@ -12,12 +12,18 @@ interface PaletteItem {
   path?: string;
 }
 
+interface SessionInfo {
+  name: string;
+  activity?: number;
+  path?: string;
+}
+
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectSession: (name: string) => void;
   onCreateSession: (name: string, cwd: string) => void;
-  existingSessions: string[];
+  existingSessions: SessionInfo[];
 }
 
 const HOME = (() => {
@@ -66,19 +72,19 @@ export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSessi
   // Build filtered item list
   const items: PaletteItem[] = [];
   const lowerQuery = query.toLowerCase();
-  const sessionSet = new Set(existingSessions);
+  const sessionNames = new Set(existingSessions.map((s) => s.name));
 
-  // Sessions section
-  const filteredSessions = existingSessions.filter(
-    (name) => name.toLowerCase().includes(lowerQuery)
-  );
-  for (const name of filteredSessions) {
-    items.push({ type: "session", name });
+  // Sessions section — sorted by most recently active
+  const filteredSessions = existingSessions
+    .filter((s) => s.name.toLowerCase().includes(lowerQuery))
+    .sort((a, b) => (b.activity ?? 0) - (a.activity ?? 0));
+  for (const s of filteredSessions) {
+    items.push({ type: "session", name: s.name, path: s.path });
   }
 
   // Workspaces section — exclude entries that already have a matching session
   const filteredWorkspaces = zoxideEntries.filter((entry) => {
-    if (sessionSet.has(entry.name)) return false;
+    if (sessionNames.has(entry.name)) return false;
     return entry.name.toLowerCase().includes(lowerQuery) || entry.path.toLowerCase().includes(lowerQuery);
   });
   for (const entry of filteredWorkspaces) {
@@ -96,14 +102,14 @@ export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSessi
       onSelectSession(item.name);
     } else if (item.path) {
       // Check if a session with this basename already exists
-      if (existingSessions.includes(item.name)) {
+      if (sessionNames.has(item.name)) {
         onSelectSession(item.name);
       } else {
         onCreateSession(item.name, item.path);
       }
     }
     onClose();
-  }, [onSelectSession, onCreateSession, onClose, existingSessions]);
+  }, [onSelectSession, onCreateSession, onClose, sessionNames]);
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {

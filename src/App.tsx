@@ -254,7 +254,7 @@ export function App() {
         onClose={() => setPaletteOpen(false)}
         onSelectSession={(name) => { handleSelectSession(name); setPaletteOpen(false); }}
         onCreateSession={handleCreateSession}
-        existingSessions={sessions.map((s) => s.name)}
+        existingSessions={sessions.map((s) => ({ name: s.name, activity: s.activity, path: s.path }))}
       />
       <div id="sidebar-trigger" />
       <Sidebar

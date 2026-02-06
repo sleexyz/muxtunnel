@@ -34,4 +34,6 @@ export interface TmuxSession {
   name: string;
   windows: TmuxWindow[];
   dimensions?: { width: number; height: number };
+  activity?: number;
+  path?: string;
 }

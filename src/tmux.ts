@@ -24,6 +24,8 @@ export interface TmuxPane {
 export interface TmuxSession {
   name: string;
   windows: TmuxWindow[];
+  activity?: number;
+  path?: string;
 }
 
 export interface TmuxWindow {
@@ -476,7 +478,7 @@ export async function listSessionsAsync(): Promise<TmuxSession[]> {
       execFileAsync(
         "tmux",
         ["list-panes", "-a", "-F",
-          "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}:#{pane_pid}:#{pane_current_command}"],
+          "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}:#{pane_pid}:#{pane_current_command}:#{session_activity}:#{session_path}"],
         { encoding: "utf-8" },
       ),
       getProcessTable(),
@@ -487,7 +489,23 @@ export async function listSessionsAsync(): Promise<TmuxSession[]> {
     for (const line of tmuxOutput.stdout.trim().split("\n")) {
       if (!line) continue;
 
-      const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr, pidStr, currentCommand] = line.split(":");
+      const parts = line.split(":");
+      const sessionName = parts[0];
+      const windowIndexStr = parts[1];
+      const windowName = parts[2];
+      const paneIndexStr = parts[3];
+      const paneId = parts[4];
+      const paneActiveStr = parts[5];
+      const colsStr = parts[6];
+      const rowsStr = parts[7];
+      const leftStr = parts[8];
+      const topStr = parts[9];
+      const pidStr = parts[10];
+      const currentCommand = parts[11];
+      const sessionActivityStr = parts[12];
+      // session_path may contain colons, so rejoin everything after field 13
+      const sessionPath = parts.slice(13).join(":");
+
       const windowIndex = parseInt(windowIndexStr, 10);
       const paneIndex = parseInt(paneIndexStr, 10);
       const active = paneActiveStr === "1";
@@ -497,6 +515,7 @@ export async function listSessionsAsync(): Promise<TmuxSession[]> {
       const top = parseInt(topStr, 10);
       const pid = parseInt(pidStr, 10);
       const process = getEffectiveProcessFromTable(pid, currentCommand, processTable);
+      const sessionActivity = parseInt(sessionActivityStr, 10);
 
       const target = `${sessionName}:${windowIndex}.${paneIndex}`;
 
@@ -506,7 +525,7 @@ export async function listSessionsAsync(): Promise<TmuxSession[]> {
       };
 
       if (!sessions.has(sessionName)) {
-        sessions.set(sessionName, { name: sessionName, windows: [] });
+        sessions.set(sessionName, { name: sessionName, windows: [], activity: sessionActivity, path: sessionPath || undefined });
       }
 
       const session = sessions.get(sessionName)!;

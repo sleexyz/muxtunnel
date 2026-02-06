@@ -263,27 +263,28 @@
         width: 520px;
         max-width: 90vw;
         margin-top: 15vh;
-        background: #1a1a1a;
-        border: 1px solid #333;
-        border-radius: 6px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        background: #1e1e1e;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
         display: flex;
         flex-direction: column;
         max-height: 60vh;
         overflow: hidden;
         font-family: Menlo, Monaco, 'Courier New', monospace;
+        font-size: 12px;
       }
       .palette-input {
         width: 100%;
         padding: 10px 14px;
         background: #252526;
         border: none;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         color: #d4d4d4;
-        font-size: 13px;
+        font-size: inherit;
         font-family: inherit;
         outline: none;
-        border-radius: 6px 6px 0 0;
+        border-radius: 10px 10px 0 0;
       }
       .palette-input:focus {
         border-bottom-color: #569cd6;
@@ -293,7 +294,7 @@
       }
       .palette-list {
         overflow-y: auto;
-        padding: 2px 0;
+        padding: 4px 0;
       }
       .palette-section-label {
         font-size: 10px;
@@ -315,7 +316,7 @@
       }
       .palette-item-name {
         color: #d4d4d4;
-        font-size: 13px;
+        font-size: inherit;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -326,14 +327,13 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        flex-shrink: 1;
-        min-width: 0;
+        margin-left: auto;
       }
       .palette-empty {
         padding: 16px;
         text-align: center;
         color: #555;
-        font-size: 12px;
+        font-size: inherit;
       }
 
       /* Mobile styles */
