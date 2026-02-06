@@ -52,6 +52,8 @@ export function TerminalView({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerSizeRef = useRef<{ width: number; height: number } | null>(null);
   const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const currentPaneRef = useRef(currentPane);
+  currentPaneRef.current = currentPane;
   const onSessionChangedRef = useRef(onSessionChanged);
   onSessionChangedRef.current = onSessionChanged;
 
@@ -135,7 +137,7 @@ export function TerminalView({
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
 
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let rafId: number | null = null;
 
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -143,9 +145,9 @@ export function TerminalView({
       const { width, height } = entry.contentRect;
       containerSizeRef.current = { width, height };
 
-      // Debounced live resize of existing terminal
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+      // Use rAF to batch resize into the next frame (avoids multi-frame flash)
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
         const terminal = terminalInstanceRef.current;
         const dims = cellDimensions;
         if (!terminal || !dims) return;
@@ -172,8 +174,12 @@ export function TerminalView({
           positionerRef.current.style.height = `${fullHeight}px`;
         }
 
-        // Update crop container for full session view
-        if (cropContainerRef.current) {
+        // Only update crop container when in full-session view.
+        // When viewing a specific pane, leave the crop container alone —
+        // the crop effect will correct it after the session refresh.
+        // Updating it here to full-session dimensions causes a flash
+        // (pane → full session → pane).
+        if (!currentPaneRef.current && cropContainerRef.current) {
           cropContainerRef.current.style.width = `${cols * dims.width}px`;
           cropContainerRef.current.style.height = `${contentRows * dims.height}px`;
         }
@@ -187,13 +193,13 @@ export function TerminalView({
             setTimeout(onRequestRefresh, 200);
           }
         }
-      }, 150);
+      });
     });
 
     observer.observe(wrapper);
     return () => {
       observer.disconnect();
-      if (debounceTimer) clearTimeout(debounceTimer);
+      if (rafId) cancelAnimationFrame(rafId);
     };
   }, [cellDimensions, computeSize, wsRef, onRequestRefresh]);
 
