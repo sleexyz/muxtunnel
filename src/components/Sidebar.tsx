@@ -137,7 +137,7 @@ export function Sidebar({
 
           return (
             <a
-              href={`/${encodeURIComponent(session.name)}`}
+              href={`/${encodeURIComponent(session.name)}${pinned ? "?sb=1" : ""}`}
               className={`session-row${isSelected ? " selected" : ""}${dropTarget === idx ? " drop-target" : ""}${dragIndexRef.current === idx ? " dragging" : ""}`}
               key={session.name}
               draggable

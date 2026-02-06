@@ -23,6 +23,17 @@ const RESERVED_PATHS = new Set(["api", "ws", "assets"]);
   }
 })();
 
+// Seed sessionStorage from ?sb= param (used when opening links in new tabs)
+(function seedSidebarState() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("sb")) {
+    sessionStorage.setItem("sidebarPinned", params.get("sb") === "1" ? "true" : "false");
+    params.delete("sb");
+    const qs = params.toString();
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  }
+})();
+
 // Get session from URL pathname
 function getSessionFromUrl(): string | null {
   const segment = window.location.pathname.split("/")[1];
