@@ -277,6 +277,7 @@ export function TerminalView({
   const bgUrl = getBackgroundImageUrl(settings);
   const bgOpacity = settings.background?.opacity ?? 0.15;
   const bgSize = settings.background?.size ?? "cover";
+  const bgFilter = settings.background?.filter;
 
   const backgroundDiv = bgUrl ? (
     <div
@@ -288,11 +289,15 @@ export function TerminalView({
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
         opacity: bgOpacity,
+        filter: bgFilter,
         pointerEvents: "none",
         zIndex: 0,
       }}
     />
   ) : null;
+
+  const windowPadding = settings.window?.padding;
+  const frameStyle = windowPadding ? { padding: windowPadding, background: "#1e1e1e", position: "relative" as const, zIndex: 1 } : undefined;
 
   if (!session) {
     return (
@@ -303,14 +308,18 @@ export function TerminalView({
     );
   }
 
+  const cropContainer = (
+    <div id="crop-container" ref={cropContainerRef}>
+      <div id="terminal-positioner" ref={positionerRef}>
+        <div id="terminal" ref={terminalRef} />
+      </div>
+    </div>
+  );
+
   return (
     <div id="terminal-wrapper">
       {backgroundDiv}
-      <div id="crop-container" ref={cropContainerRef}>
-        <div id="terminal-positioner" ref={positionerRef}>
-          <div id="terminal" ref={terminalRef} />
-        </div>
-      </div>
+      {frameStyle ? <div style={frameStyle}>{cropContainer}</div> : cropContainer}
     </div>
   );
 }

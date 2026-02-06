@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TerminalView } from "./components/TerminalView";
 import { InputBar } from "./components/InputBar";
 import type { TmuxSession, TmuxPane } from "./types";
+import { useSettings } from "./hooks/useSettings";
 
 // Get session from URL query param
 function getSessionFromUrl(): string | null {
@@ -60,6 +61,7 @@ export function App() {
   const [currentPane, setCurrentPane] = useState<string | null>(initialState.pane);
   const [currentSession, setCurrentSession] = useState<string | null>(initialState.session);
   const wsRef = useRef<WebSocket | null>(null);
+  const settings = useSettings();
 
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
@@ -229,6 +231,7 @@ export function App() {
           currentPane={currentPane}
           sessions={sessions}
           wsRef={wsRef}
+          settings={settings}
         />
         {currentPane && <InputBar target={currentPane} />}
       </div>

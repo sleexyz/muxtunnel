@@ -10,5 +10,5 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["src/server.ts", "src/tmux.ts", "src/attention.ts", "src/pty.ts", "src/claude-sessions.ts"]
+  "include": ["src/server.ts", "src/tmux.ts", "src/attention.ts", "src/pty.ts", "src/claude-sessions.ts", "src/settings.ts"]
 }
