@@ -2,12 +2,15 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { TmuxSession, TmuxPane } from "../types";
+import type { MuxTunnelSettings } from "../hooks/useSettings";
+import { getBackgroundImageUrl } from "../hooks/useSettings";
 
 interface TerminalViewProps {
   session: TmuxSession | null;
   currentPane: string | null;
   sessions: TmuxSession[];
   wsRef: React.MutableRefObject<WebSocket | null>;
+  settings: MuxTunnelSettings;
 }
 
 interface CellDimensions {
@@ -20,6 +23,7 @@ export function TerminalView({
   currentPane,
   sessions,
   wsRef,
+  settings,
 }: TerminalViewProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
@@ -27,6 +31,9 @@ export function TerminalView({
   const positionerRef = useRef<HTMLDivElement>(null);
   const [cellDimensions, setCellDimensions] = useState<CellDimensions | null>(null);
   const lastSessionRef = useRef<string | null>(null);
+  const lastFontKeyRef = useRef<string>("");
+  const wsGenerationRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const findPane = useCallback(
     (target: string): TmuxPane | null => {
@@ -57,7 +64,6 @@ export function TerminalView({
 
       cropContainerRef.current.style.width = `${pane.cols * dims.width}px`;
       cropContainerRef.current.style.height = `${pane.rows * dims.height}px`;
-
       positionerRef.current.style.transform = `translate(${-effectiveLeft * dims.width}px, ${-effectiveTop * dims.height}px)`;
     },
     [findPane]
@@ -74,7 +80,6 @@ export function TerminalView({
 
       cropContainerRef.current.style.width = `${width * dims.width}px`;
       cropContainerRef.current.style.height = `${height * dims.height}px`;
-
       positionerRef.current.style.transform = "translate(0, 0)";
     },
     [session]
@@ -90,11 +95,17 @@ export function TerminalView({
       return;
     }
 
-    // Only reinitialize if session changed
-    if (lastSessionRef.current === session.name && terminalInstanceRef.current) {
+    // Detect font settings changes
+    const fontSize = settings.terminal?.fontSize ?? 14;
+    const fontFamily = settings.terminal?.fontFamily ?? 'Menlo, Monaco, "Courier New", monospace';
+    const fontKey = `${fontSize}|${fontFamily}`;
+
+    // Only reinitialize if session or font settings changed
+    if (lastSessionRef.current === session.name && lastFontKeyRef.current === fontKey && terminalInstanceRef.current) {
       return;
     }
     lastSessionRef.current = session.name;
+    lastFontKeyRef.current = fontKey;
 
     const { width: cols, height: rows } = session.dimensions;
 
@@ -115,8 +126,8 @@ export function TerminalView({
       cols,
       rows,
       cursorBlink: true,
-      fontSize: 14,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontSize,
+      fontFamily,
       theme: {
         background: "#1e1e1e",
         foreground: "#d4d4d4",
@@ -165,9 +176,22 @@ export function TerminalView({
       }
     });
 
-    // Connect WebSocket
+    // Connect WebSocket with auto-reconnection
     const paneTarget = currentPane || session.windows[0]?.panes[0]?.target;
-    if (paneTarget) {
+    const generation = ++wsGenerationRef.current;
+
+    // Cancel any pending reconnect from a previous connection
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    let reconnectDelay = 1000;
+    const MAX_RECONNECT_DELAY = 10_000;
+
+    function connect() {
+      if (wsGenerationRef.current !== generation || !paneTarget) return;
+
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(paneTarget)}&cols=${cols}&rows=${rows}`;
 
@@ -175,13 +199,15 @@ export function TerminalView({
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
+      ws.onopen = () => {
+        reconnectDelay = 1000;
+      };
+
       ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
-          const data = new Uint8Array(event.data);
-          terminal.write(data);
+          terminal.write(new Uint8Array(event.data));
           return;
         }
-
         try {
           JSON.parse(event.data);
         } catch {
@@ -191,8 +217,21 @@ export function TerminalView({
         }
       };
 
-      ws.onclose = () => {
-        terminal.write("\r\n\x1b[31m[Connection closed]\x1b[0m\r\n");
+      ws.onclose = (event) => {
+        if (wsGenerationRef.current !== generation) return;
+
+        // Don't reconnect on permanent server-side rejections (4xxx codes)
+        if (event.code >= 4000 && event.code < 5000) {
+          terminal.write(`\r\n\x1b[31m[Connection closed: ${event.reason || "server rejected"}]\x1b[0m\r\n`);
+          return;
+        }
+
+        console.warn(`[WS] closed (code: ${event.code}, reason: ${event.reason || "none"})`);
+        terminal.write("\r\n\x1b[33m[Reconnecting...]\x1b[0m");
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+          connect();
+        }, reconnectDelay);
       };
 
       ws.onerror = (err) => {
@@ -200,10 +239,23 @@ export function TerminalView({
       };
     }
 
+    connect();
+  }, [session, currentPane, wsRef, settings]);
+
+  // Cleanup WebSocket and reconnect timers on unmount
+  useEffect(() => {
     return () => {
-      // Cleanup on unmount only
+      wsGenerationRef.current++;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
-  }, [session, currentPane, wsRef]);
+  }, [wsRef]);
 
   // Apply crop when pane or cell dimensions change
   useEffect(() => {
@@ -218,9 +270,30 @@ export function TerminalView({
     }
   }, [currentPane, session, cellDimensions, applyCropForPane, showFullSession]);
 
+  const bgUrl = getBackgroundImageUrl(settings);
+  const bgOpacity = settings.background?.opacity ?? 0.15;
+  const bgSize = settings.background?.size ?? "cover";
+
+  const backgroundDiv = bgUrl ? (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        backgroundImage: `url(${bgUrl})`,
+        backgroundSize: bgSize,
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+        opacity: bgOpacity,
+        pointerEvents: "none",
+        zIndex: 0,
+      }}
+    />
+  ) : null;
+
   if (!session) {
     return (
       <div id="terminal-wrapper">
+        {backgroundDiv}
         <div className="no-selection">Select a pane from the sidebar</div>
       </div>
     );
@@ -228,6 +301,7 @@ export function TerminalView({
 
   return (
     <div id="terminal-wrapper">
+      {backgroundDiv}
       <div id="crop-container" ref={cropContainerRef}>
         <div id="terminal-positioner" ref={positionerRef}>
           <div id="terminal" ref={terminalRef} />

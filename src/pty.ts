@@ -78,6 +78,11 @@ export function createPtySession(options: PtySessionOptions): PtySession {
     emitter.emit("error", err);
   });
 
+  // Surface write errors (e.g., writing to PTY after process exit)
+  pty.write.on("error", (err: Error) => {
+    emitter.emit("error", err);
+  });
+
   pty.read.on("end", () => {
     emitter.emit("end");
   });

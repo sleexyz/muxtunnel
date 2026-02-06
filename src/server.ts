@@ -8,6 +8,7 @@ import { getPaneInfo, isTmuxRunning, killPane, listSessionsAsync, capturePaneAsy
 import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
 import { getActiveSession, markSessionViewed, startWatching as startClaudeWatching, getPaneCwdAsync, isPaneProcessingAsync } from "./claude-sessions.js";
+import { getSettings, getBackgroundImagePath, startSettingsWatching } from "./settings.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const HOST = process.env.HOST || "localhost";
@@ -153,6 +154,32 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/settings") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getSettings()));
+    return;
+  }
+
+  if (url.pathname === "/api/settings/background") {
+    const imagePath = getBackgroundImagePath();
+    if (!imagePath) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No local background image configured" }));
+      return;
+    }
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeType = MIME_TYPES[ext] || "application/octet-stream";
+    try {
+      const data = fs.readFileSync(imagePath);
+      res.writeHead(200, { "Content-Type": mimeType });
+      res.end(data);
+    } catch {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to read background image" }));
+    }
+    return;
+  }
+
   // DELETE /api/panes/:target - kill a pane
   const paneDeleteMatch = url.pathname.match(/^\/api\/panes\/([^/]+)$/);
   if (paneDeleteMatch && req.method === "DELETE") {
@@ -235,6 +262,21 @@ const wss = new WebSocketServer({ noServer: true });
 // Track active PTY sessions per WebSocket connection
 const activeSessions = new Map<WebSocket, PtySession>();
 
+// Heartbeat to detect dead connections and prevent proxy/OS idle timeouts
+const PING_INTERVAL_MS = 30_000;
+const wsAlive = new Map<WebSocket, boolean>();
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (wsAlive.get(ws) === false) {
+      console.log("[WS] Terminating unresponsive client");
+      ws.terminate();
+      continue;
+    }
+    wsAlive.set(ws, false);
+    ws.ping();
+  }
+}, PING_INTERVAL_MS);
+
 // Handle WebSocket connections
 wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
@@ -248,6 +290,10 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   }
 
   console.log(`[WS] Client connected for pane: ${paneTarget} (${cols}x${rows})`);
+
+  // Heartbeat tracking
+  wsAlive.set(ws, true);
+  ws.on("pong", () => { wsAlive.set(ws, true); });
 
   // Get initial pane info to verify it exists
   const paneInfo = getPaneInfo(paneTarget);
@@ -297,6 +343,13 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
     console.error(`[WS] PTY error for pane ${paneTarget}:`, err);
   });
 
+  ptySession.on("end", () => {
+    console.log(`[WS] PTY stream ended for pane ${paneTarget}`);
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close(1000, "PTY stream ended");
+    }
+  });
+
   // Handle incoming messages (keystrokes and control messages)
   ws.on("message", (data: Buffer) => {
     const message = data.toString();
@@ -327,8 +380,9 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   });
 
   // Cleanup on close
-  ws.on("close", () => {
-    console.log(`[WS] Client disconnected for pane: ${paneTarget}`);
+  ws.on("close", (code: number, reason: Buffer) => {
+    console.log(`[WS] Client disconnected for pane: ${paneTarget} (code: ${code}, reason: ${reason.toString() || "none"})`);
+    wsAlive.delete(ws);
     const session = activeSessions.get(ws);
     if (session) {
       session.close();
@@ -338,6 +392,7 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
 
   ws.on("error", (err) => {
     console.error(`[WS] Error for pane ${paneTarget}:`, err);
+    wsAlive.delete(ws);
     const session = activeSessions.get(ws);
     if (session) {
       session.close();
@@ -366,6 +421,9 @@ server.on("upgrade", (req, socket, head) => {
 
 // Start Claude session watching
 startClaudeWatching();
+
+// Start settings file watching
+startSettingsWatching();
 
 // Start server
 server.listen(PORT, HOST, () => {
