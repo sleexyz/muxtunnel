@@ -203,6 +203,27 @@ export function App() {
     [currentPane, fetchSessions]
   );
 
+  // Close a session
+  const handleCloseSession = useCallback(
+    async (name: string) => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(name)}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          if (currentSession === name) {
+            setCurrentSession(null);
+            setCurrentPane(null);
+          }
+          await fetchSessions();
+        }
+      } catch (err) {
+        console.error("Failed to close session:", err);
+      }
+    },
+    [currentSession, fetchSessions]
+  );
+
   // Mark Claude session as viewed
   const handleMarkViewed = useCallback(async (sessionId: string) => {
     try {
@@ -279,6 +300,7 @@ export function App() {
         onSelectPane={handleSelectPane}
         onSelectSession={handleSelectSession}
         onClosePane={handleClosePane}
+        onCloseSession={handleCloseSession}
         onMarkViewed={handleMarkViewed}
       />
       <div id="terminal-container">

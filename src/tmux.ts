@@ -341,6 +341,18 @@ export function killPane(target: string): void {
   }
 }
 
+export function killSession(name: string): void {
+  if (!isTmuxRunning()) {
+    throw new Error("tmux is not running");
+  }
+
+  try {
+    execSync(`tmux kill-session -t ${name}`, { encoding: "utf-8" });
+  } catch (err) {
+    throw new Error(`Failed to kill session ${name}: ${err}`);
+  }
+}
+
 /**
  * Get detailed info about a specific pane
  */

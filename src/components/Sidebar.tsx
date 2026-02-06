@@ -9,6 +9,7 @@ interface SidebarProps {
   onSelectPane: (target: string) => void;
   onSelectSession: (sessionName: string) => void;
   onClosePane: (target: string) => void;
+  onCloseSession: (sessionName: string) => void;
   onMarkViewed: (sessionId: string) => void;
 }
 
@@ -28,6 +29,7 @@ export function Sidebar({
   onSelectPane,
   onSelectSession,
   onClosePane,
+  onCloseSession,
   onMarkViewed,
 }: SidebarProps) {
   if (sessions.length === 0) {
@@ -80,6 +82,15 @@ export function Sidebar({
                 onClick={() => { onSelectSession(session.name); if (!pinned) collapseSidebar(); }}
               >
                 {escapeHtml(session.name)}
+                <span
+                  className="close-btn session-close-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseSession(session.name);
+                  }}
+                >
+                  &times;
+                </span>
               </div>
 
               {session.windows.map((window: TmuxWindow) =>

@@ -5,7 +5,7 @@ import path from "node:path";
 import { execSync, execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
-import { getPaneInfo, isTmuxRunning, killPane, listSessionsAsync, capturePaneAsync, getSessionDimensionsAsync, createSessionAsync } from "./tmux.js";
+import { getPaneInfo, isTmuxRunning, killPane, killSession, listSessionsAsync, capturePaneAsync, getSessionDimensionsAsync, createSessionAsync } from "./tmux.js";
 
 const execFileAsync = promisify(execFileCb);
 import { detectAttention } from "./attention.js";
@@ -224,6 +224,21 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // DELETE /api/sessions/:name - kill a session
+  const sessionDeleteMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionDeleteMatch && req.method === "DELETE") {
+    const name = decodeURIComponent(sessionDeleteMatch[1]);
+    try {
+      killSession(name);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
   // DELETE /api/panes/:target - kill a pane
   const paneDeleteMatch = url.pathname.match(/^\/api\/panes\/([^/]+)$/);
   if (paneDeleteMatch && req.method === "DELETE") {
@@ -291,6 +306,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Internal endpoint: tmux hook notifies us when a client switches sessions
+  if (url.pathname === "/api/internal/session-changed" && req.method === "GET") {
+    const pid = parseInt(url.searchParams.get("pid") || "", 10);
+    const session = url.searchParams.get("session");
+    if (!pid || !session) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "pid and session required" }));
+      return;
+    }
+    const ws = pidToWs.get(pid);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "session-changed", session }));
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   // Serve static files
   if (serveStaticFile(req, res)) {
     return;
@@ -305,6 +338,9 @@ const wss = new WebSocketServer({ noServer: true });
 
 // Track active PTY sessions per WebSocket connection
 const activeSessions = new Map<WebSocket, PtySession>();
+
+// Map child PID → WebSocket for session-changed hook notifications
+const pidToWs = new Map<number, WebSocket>();
 
 // Heartbeat to detect dead connections and prevent proxy/OS idle timeouts
 const PING_INTERVAL_MS = 30_000;
@@ -361,7 +397,8 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
       rows,
     });
     activeSessions.set(ws, ptySession);
-    console.log(`[WS] PTY session created for pane: ${paneTarget}`);
+    pidToWs.set(ptySession.pid, ws);
+    console.log(`[WS] PTY session created for pane: ${paneTarget} (pid: ${ptySession.pid})`);
   } catch (err) {
     console.error(`[WS] Failed to create PTY for pane ${paneTarget}:`, err);
     ws.close(4002, "Failed to create PTY session");
@@ -429,6 +466,7 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
     wsAlive.delete(ws);
     const session = activeSessions.get(ws);
     if (session) {
+      pidToWs.delete(session.pid);
       session.close();
       activeSessions.delete(ws);
     }
@@ -439,6 +477,7 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
     wsAlive.delete(ws);
     const session = activeSessions.get(ws);
     if (session) {
+      pidToWs.delete(session.pid);
       session.close();
       activeSessions.delete(ws);
     }
@@ -469,6 +508,34 @@ startClaudeWatching();
 // Start settings file watching
 startSettingsWatching();
 
+// Install tmux hook to detect session switches and clean up on exit
+function installTmuxHook() {
+  try {
+    const hookCmd = `run-shell "curl -s \\"http://${HOST}:${PORT}/api/internal/session-changed?pid=#{client_pid}&session=#{session_name}\\" &"`;
+    execSync(`tmux set-hook -g 'client-session-changed[999]' '${hookCmd}'`);
+    console.log("[tmux] Installed client-session-changed hook");
+  } catch (err) {
+    console.warn("[tmux] Failed to install session-changed hook:", err);
+  }
+}
+
+function removeTmuxHook() {
+  try {
+    execSync("tmux set-hook -gu 'client-session-changed[999]'");
+    console.log("[tmux] Removed client-session-changed hook");
+  } catch {
+    // tmux may not be running during shutdown
+  }
+}
+
+function shutdown() {
+  removeTmuxHook();
+  process.exit(0);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
 // Start server
 server.listen(PORT, HOST, () => {
   console.log(`MuxTunnel server running at http://${HOST}:${PORT}`);
@@ -477,5 +544,7 @@ server.listen(PORT, HOST, () => {
 
   if (!isTmuxRunning()) {
     console.warn("\n⚠️  tmux is not running! Start tmux to use MuxTunnel.\n");
+  } else {
+    installTmuxHook();
   }
 });
