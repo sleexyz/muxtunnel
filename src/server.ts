@@ -1,12 +1,13 @@
 import http from "node:http";
+import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
-import { listSessions, capturePane, getPaneInfo, isTmuxRunning, getSessionDimensions, killPane } from "./tmux.js";
+import { getPaneInfo, isTmuxRunning, killPane, listSessionsAsync, capturePaneAsync, getSessionDimensionsAsync } from "./tmux.js";
 import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
-import { getActiveSession, getPaneCwd, markSessionViewed, startWatching as startClaudeWatching, isPaneProcessing } from "./claude-sessions.js";
+import { getActiveSession, markSessionViewed, startWatching as startClaudeWatching, getPaneCwdAsync, isPaneProcessingAsync } from "./claude-sessions.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const HOST = process.env.HOST || "localhost";
@@ -27,47 +28,52 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
- * Get sessions with attention state, dimensions, and Claude session info
+ * Get sessions with attention state, dimensions, and Claude session info.
+ * Fully async — never blocks the event loop, so WebSocket I/O stays responsive.
  */
-function getSessionsWithAttention() {
-  const sessions = listSessions();
+async function getSessionsWithAttention() {
+  const sessions = await listSessionsAsync();
 
-  // Add attention detection, dimensions, and Claude session info to each session
-  for (const session of sessions) {
-    // Get session dimensions
-    const dimensions = getSessionDimensions(session.name);
+  // Fetch all session dimensions in parallel
+  await Promise.all(sessions.map(async (session) => {
+    const dimensions = await getSessionDimensionsAsync(session.name);
     if (dimensions) {
       (session as any).dimensions = dimensions;
     }
+  }));
 
+  // Process all panes in parallel (capture + attention + Claude status)
+  const paneJobs: Promise<void>[] = [];
+  for (const session of sessions) {
     for (const window of session.windows) {
       for (const pane of window.panes) {
-        try {
-          const content = capturePane(pane.target);
-          const attention = detectAttention(content);
-          (pane as any).needsAttention = attention.needsAttention;
-          (pane as any).attentionReason = attention.reason;
-        } catch {
-          (pane as any).needsAttention = false;
-        }
+        paneJobs.push((async () => {
+          try {
+            const content = await capturePaneAsync(pane.target);
+            const attention = detectAttention(content);
+            (pane as any).needsAttention = attention.needsAttention;
+            (pane as any).attentionReason = attention.reason;
+          } catch {
+            (pane as any).needsAttention = false;
+          }
 
-        // If this pane is running Claude, get session info
-        if (pane.process === "claude") {
-          const cwd = getPaneCwd(pane.target);
-          if (cwd) {
-            const claudeSession = getActiveSession(cwd);
-            if (claudeSession) {
-              // Override status if pane shows active processing (orange text)
-              if (isPaneProcessing(pane.target)) {
-                claudeSession.status = "thinking";
+          if (pane.process === "claude") {
+            const cwd = await getPaneCwdAsync(pane.target);
+            if (cwd) {
+              const claudeSession = getActiveSession(cwd);
+              if (claudeSession) {
+                if (await isPaneProcessingAsync(pane.target)) {
+                  claudeSession.status = "thinking";
+                }
+                (pane as any).claudeSession = claudeSession;
               }
-              (pane as any).claudeSession = claudeSession;
             }
           }
-        }
+        })());
       }
     }
   }
+  await Promise.all(paneJobs);
 
   return sessions;
 }
@@ -126,9 +132,14 @@ const server = http.createServer((req, res) => {
 
   // API endpoints
   if (url.pathname === "/api/sessions") {
-    const sessions = getSessionsWithAttention();
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(sessions));
+    getSessionsWithAttention().then((sessions) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(sessions));
+    }).catch((err) => {
+      console.error("Failed to get sessions:", err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to get sessions" }));
+    });
     return;
   }
 
@@ -340,6 +351,11 @@ server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
   if (url.pathname === "/ws") {
+    // Disable Nagle's algorithm — critical for low-latency interactive I/O.
+    // Without this, small keystroke packets can be delayed 40-200ms by Nagle + delayed ACK.
+    if (socket instanceof net.Socket) {
+      socket.setNoDelay(true);
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);
     });

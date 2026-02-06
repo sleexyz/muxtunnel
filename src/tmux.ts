@@ -1,4 +1,7 @@
-import { spawn, execSync } from "node:child_process";
+import { execSync, execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCb);
 
 export interface TmuxPane {
   sessionName: string;
@@ -371,6 +374,185 @@ export function getPaneInfo(target: string): TmuxPane | null {
     };
   } catch (err) {
     console.error(`Failed to get pane info for ${target}:`, err);
+    return null;
+  }
+}
+
+// ─── Async variants (non-blocking, for polling paths) ───────────────────────
+
+/**
+ * Fetch the entire process table in a single `ps` call.
+ * Returns a map of PID → { ppid, comm } for in-memory tree walking.
+ */
+async function getProcessTable(): Promise<Map<number, { ppid: number; comm: string }>> {
+  try {
+    const { stdout } = await execFileAsync("ps", ["-eo", "pid=,ppid=,comm="], { encoding: "utf-8" });
+    const table = new Map<number, { ppid: number; comm: string }>();
+    for (const line of stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const match = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      if (match) {
+        table.set(parseInt(match[1], 10), {
+          ppid: parseInt(match[2], 10),
+          comm: match[3],
+        });
+      }
+    }
+    return table;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * In-memory process tree walk using a pre-fetched process table.
+ * Replaces N×depth execSync("ps") calls with pure lookups.
+ */
+function getEffectiveProcessFromTable(
+  pid: number,
+  currentCommand: string,
+  table: Map<number, { ppid: number; comm: string }>,
+): string {
+  const wrappers = ["zsh", "bash", "sh", "fish", "tcsh", "csh", "-zsh", "-bash", "-sh", "npm", "npx", "node"];
+
+  if (!wrappers.includes(currentCommand)) {
+    return currentCommand;
+  }
+
+  let currentPid = pid;
+  let depth = 0;
+  const maxDepth = 5;
+
+  while (depth < maxDepth) {
+    const children: number[] = [];
+    for (const [childPid, info] of table) {
+      if (info.ppid === currentPid) {
+        children.push(childPid);
+      }
+    }
+
+    if (children.length === 0) {
+      if (currentPid !== pid) {
+        const proc = table.get(currentPid);
+        if (proc) {
+          const cmd = extractCmdName(proc.comm);
+          if (cmd) return cmd;
+        }
+      }
+      return currentCommand;
+    }
+
+    const childPid = children[0];
+    const childInfo = table.get(childPid);
+    if (!childInfo) return currentCommand;
+
+    const cmdName = extractCmdName(childInfo.comm);
+    if (!wrappers.includes(cmdName) && !wrappers.includes(`-${cmdName}`)) {
+      return cmdName;
+    }
+
+    currentPid = childPid;
+    depth++;
+  }
+
+  return currentCommand;
+}
+
+/**
+ * Async version of listSessions.
+ * Runs tmux list-panes and ps in parallel, then does in-memory tree walking.
+ */
+export async function listSessionsAsync(): Promise<TmuxSession[]> {
+  try {
+    const [tmuxOutput, processTable] = await Promise.all([
+      execFileAsync(
+        "tmux",
+        ["list-panes", "-a", "-F",
+          "#{session_name}:#{window_index}:#{window_name}:#{pane_index}:#{pane_id}:#{pane_active}:#{pane_width}:#{pane_height}:#{pane_left}:#{pane_top}:#{pane_pid}:#{pane_current_command}"],
+        { encoding: "utf-8" },
+      ),
+      getProcessTable(),
+    ]);
+
+    const sessions = new Map<string, TmuxSession>();
+
+    for (const line of tmuxOutput.stdout.trim().split("\n")) {
+      if (!line) continue;
+
+      const [sessionName, windowIndexStr, windowName, paneIndexStr, paneId, paneActiveStr, colsStr, rowsStr, leftStr, topStr, pidStr, currentCommand] = line.split(":");
+      const windowIndex = parseInt(windowIndexStr, 10);
+      const paneIndex = parseInt(paneIndexStr, 10);
+      const active = paneActiveStr === "1";
+      const cols = parseInt(colsStr, 10);
+      const rows = parseInt(rowsStr, 10);
+      const left = parseInt(leftStr, 10);
+      const top = parseInt(topStr, 10);
+      const pid = parseInt(pidStr, 10);
+      const process = getEffectiveProcessFromTable(pid, currentCommand, processTable);
+
+      const target = `${sessionName}:${windowIndex}.${paneIndex}`;
+
+      const pane: TmuxPane = {
+        sessionName, windowIndex, windowName, paneIndex, paneId, target,
+        active, cols, rows, left, top, pid, process,
+      };
+
+      if (!sessions.has(sessionName)) {
+        sessions.set(sessionName, { name: sessionName, windows: [] });
+      }
+
+      const session = sessions.get(sessionName)!;
+      let window = session.windows.find((w) => w.index === windowIndex);
+      if (!window) {
+        window = { index: windowIndex, name: windowName, panes: [] };
+        session.windows.push(window);
+      }
+      window.panes.push(pane);
+    }
+
+    for (const session of sessions.values()) {
+      session.windows.sort((a, b) => a.index - b.index);
+      for (const window of session.windows) {
+        window.panes.sort((a, b) => a.paneIndex - b.paneIndex);
+      }
+    }
+
+    return Array.from(sessions.values());
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Async version of capturePane.
+ */
+export async function capturePaneAsync(target: string, options: { escape?: boolean; start?: number; end?: number } = {}): Promise<string> {
+  const args = ["capture-pane", "-p", "-t", target];
+  if (options.escape) args.push("-e");
+  if (options.start !== undefined) args.push("-S", options.start.toString());
+  if (options.end !== undefined) args.push("-E", options.end.toString());
+
+  const { stdout } = await execFileAsync("tmux", args, { encoding: "utf-8" });
+  return stdout;
+}
+
+/**
+ * Async version of getSessionDimensions.
+ */
+export async function getSessionDimensionsAsync(sessionName: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "tmux",
+      ["display-message", "-t", sessionName, "-p", "#{window_width}:#{window_height}"],
+      { encoding: "utf-8" },
+    );
+    const [widthStr, heightStr] = stdout.trim().split(":");
+    const width = parseInt(widthStr, 10);
+    const height = parseInt(heightStr, 10);
+    if (isNaN(width) || isNaN(height)) return null;
+    return { width, height };
+  } catch {
     return null;
   }
 }

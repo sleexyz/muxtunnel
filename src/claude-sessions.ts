@@ -1,7 +1,10 @@
-import { execSync } from "node:child_process";
+import { execSync, execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+
+const execFileAsync = promisify(execFileCb);
 
 const CLAUDE_PROJECTS_DIR = path.join(process.env.HOME || "", ".claude", "projects");
 
@@ -191,6 +194,35 @@ export function isPaneProcessing(paneTarget: string): boolean {
 
     // Key: thinking status always has ellipsis "…" (distinguishes from "config (0:0)" etc)
     return thinkingColor.test(output) && output.includes("…");
+  } catch {
+    return false;
+  }
+}
+
+// ─── Async variants (non-blocking, for polling paths) ───────────────────────
+
+export async function getPaneCwdAsync(paneTarget: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "tmux",
+      ["display-message", "-t", paneTarget, "-p", "#{pane_current_path}"],
+      { encoding: "utf-8" },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function isPaneProcessingAsync(paneTarget: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      "tmux",
+      ["capture-pane", "-t", paneTarget, "-p", "-e", "-S", "-10"],
+      { encoding: "utf-8" },
+    );
+    const thinkingColor = /\x1b\[38;2;(2[0-3][0-9]);(1[0-5][0-9]);([89][0-9]|1[0-2][0-9])m/;
+    return thinkingColor.test(stdout) && stdout.includes("…");
   } catch {
     return false;
   }
