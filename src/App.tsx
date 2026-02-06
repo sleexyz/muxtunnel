@@ -5,6 +5,7 @@ import { InputBar } from "./components/InputBar";
 import { CommandPalette } from "./components/CommandPalette";
 import type { TmuxSession, TmuxPane } from "./types";
 import { useSettings } from "./hooks/useSettings";
+import { useSessionOrder } from "./hooks/useSessionOrder";
 
 // Get session from URL query param
 function getSessionFromUrl(): string | null {
@@ -65,6 +66,10 @@ export function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(false);
   const settings = useSettings();
+  const { applyOrder, reorder } = useSessionOrder();
+
+  // Sessions in user-defined order for sidebar/palette display
+  const orderedSessions = applyOrder(sessions);
 
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
@@ -289,11 +294,11 @@ export function App() {
         onClose={() => setPaletteOpen(false)}
         onSelectSession={(name) => { handleSelectSession(name); setPaletteOpen(false); }}
         onCreateSession={handleCreateSession}
-        existingSessions={sessions.map((s) => ({ name: s.name, activity: s.activity, path: s.path }))}
+        existingSessions={orderedSessions.map((s) => ({ name: s.name, path: s.path }))}
       />
       {!sidebarPinned && <div id="sidebar-trigger" />}
       <Sidebar
-        sessions={sessions}
+        sessions={orderedSessions}
         currentPane={currentPane}
         currentSession={currentSession}
         pinned={sidebarPinned}
@@ -302,6 +307,7 @@ export function App() {
         onClosePane={handleClosePane}
         onCloseSession={handleCloseSession}
         onMarkViewed={handleMarkViewed}
+        onReorder={(from, to) => reorder(orderedSessions, from, to)}
       />
       <div id="terminal-container">
         <TerminalView

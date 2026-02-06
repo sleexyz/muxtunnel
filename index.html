@@ -67,6 +67,24 @@
       }
       .session-group {
         margin-bottom: 16px;
+        position: relative;
+        cursor: grab;
+      }
+      .session-group:active {
+        cursor: grabbing;
+      }
+      .session-group.dragging {
+        opacity: 0.4;
+      }
+      .session-group.drop-target::before {
+        content: "";
+        position: absolute;
+        top: -2px;
+        left: 4px;
+        right: 4px;
+        height: 2px;
+        background: #3794ff;
+        border-radius: 1px;
       }
       .session-name {
         font-size: 12px;

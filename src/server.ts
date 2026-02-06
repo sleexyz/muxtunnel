@@ -12,6 +12,7 @@ import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
 import { getActiveSession, markSessionViewed, startWatching as startClaudeWatching, getPaneCwdAsync, isPaneProcessingAsync } from "./claude-sessions.js";
 import { getSettings, getBackgroundImagePath, startSettingsWatching } from "./settings.js";
+import { getSessionOrder, saveSessionOrder, loadSessionOrder } from "./session-order.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const HOST = process.env.HOST || "localhost";
@@ -125,7 +126,7 @@ const server = http.createServer((req, res) => {
 
   // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
@@ -221,6 +222,34 @@ const server = http.createServer((req, res) => {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Failed to read background image" }));
     }
+    return;
+  }
+
+  if (url.pathname === "/api/session-order" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(getSessionOrder()));
+    return;
+  }
+
+  if (url.pathname === "/api/session-order" && req.method === "PUT") {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const parsed = JSON.parse(body);
+        if (!Array.isArray(parsed) || !parsed.every((s: unknown) => typeof s === "string")) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Expected array of strings" }));
+          return;
+        }
+        saveSessionOrder(parsed);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON" }));
+      }
+    });
     return;
   }
 
@@ -507,6 +536,9 @@ startClaudeWatching();
 
 // Start settings file watching
 startSettingsWatching();
+
+// Load session order
+loadSessionOrder();
 
 // Install tmux hook to detect session switches and clean up on exit
 function installTmuxHook() {

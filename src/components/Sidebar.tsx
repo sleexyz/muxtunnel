@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { TmuxSession, TmuxWindow, TmuxPane } from "../types";
 
 interface SidebarProps {
@@ -11,6 +11,7 @@ interface SidebarProps {
   onClosePane: (target: string) => void;
   onCloseSession: (sessionName: string) => void;
   onMarkViewed: (sessionId: string) => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
 }
 
 function escapeHtml(str: string): string {
@@ -31,6 +32,7 @@ export function Sidebar({
   onClosePane,
   onCloseSession,
   onMarkViewed,
+  onReorder,
 }: SidebarProps) {
   if (sessions.length === 0) {
     return (
@@ -46,6 +48,8 @@ export function Sidebar({
   }
 
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const dragIndexRef = useRef<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<number | null>(null);
 
   // Collapse sidebar by briefly disabling pointer-events so the
   // mouse-leave fires immediately and the sidebar hides.
@@ -71,12 +75,43 @@ export function Sidebar({
   return (
     <div id="sidebar" className={pinned ? "pinned" : ""} ref={sidebarRef}>
       <div id="sessions-list">
-        {[...sessions].sort((a, b) => (b.activity ?? 0) - (a.activity ?? 0)).map((session) => {
+        {sessions.map((session, idx) => {
           const isSessionSelected =
             currentSession === session.name && currentPane === null;
 
           return (
-            <div className="session-group" key={session.name}>
+            <div
+              className={`session-group${dropTarget === idx ? " drop-target" : ""}${dragIndexRef.current === idx ? " dragging" : ""}`}
+              key={session.name}
+              draggable
+              onDragStart={(e) => {
+                dragIndexRef.current = idx;
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (dragIndexRef.current !== null && dragIndexRef.current !== idx) {
+                  setDropTarget(idx);
+                }
+              }}
+              onDragLeave={() => {
+                setDropTarget((cur) => (cur === idx ? null : cur));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const from = dragIndexRef.current;
+                if (from !== null && from !== idx) {
+                  onReorder(from, idx);
+                }
+                dragIndexRef.current = null;
+                setDropTarget(null);
+              }}
+              onDragEnd={() => {
+                dragIndexRef.current = null;
+                setDropTarget(null);
+              }}
+            >
               <div
                 className={`session-name clickable ${isSessionSelected ? "selected" : ""}`}
                 onClick={() => { onSelectSession(session.name); if (!pinned) collapseSidebar(); }}

@@ -14,7 +14,6 @@ interface PaletteItem {
 
 interface SessionInfo {
   name: string;
-  activity?: number;
   path?: string;
 }
 
@@ -74,10 +73,9 @@ export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSessi
   const lowerQuery = query.toLowerCase();
   const sessionNames = new Set(existingSessions.map((s) => s.name));
 
-  // Sessions section — sorted by most recently active
+  // Sessions section — order matches sidebar (pre-sorted by caller)
   const filteredSessions = existingSessions
-    .filter((s) => s.name.toLowerCase().includes(lowerQuery))
-    .sort((a, b) => (b.activity ?? 0) - (a.activity ?? 0));
+    .filter((s) => s.name.toLowerCase().includes(lowerQuery));
   for (const s of filteredSessions) {
     items.push({ type: "session", name: s.name, path: s.path });
   }
