@@ -122,7 +122,8 @@ export function Sidebar({
     if (!pinned) collapseSidebar();
   };
 
-  const handleSessionClick = (sessionName: string) => {
+  const handleSessionClick = (e: React.MouseEvent, sessionName: string) => {
+    e.preventDefault();
     onSelectSession(sessionName);
     if (!pinned) collapseSidebar();
   };
@@ -135,7 +136,8 @@ export function Sidebar({
           const panes = getAllPanes(session);
 
           return (
-            <div
+            <a
+              href={`/${encodeURIComponent(session.name)}`}
               className={`session-row${isSelected ? " selected" : ""}${dropTarget === idx ? " drop-target" : ""}${dragIndexRef.current === idx ? " dragging" : ""}`}
               key={session.name}
               draggable
@@ -166,7 +168,7 @@ export function Sidebar({
                 dragIndexRef.current = null;
                 setDropTarget(null);
               }}
-              onClick={() => handleSessionClick(session.name)}
+              onClick={(e) => handleSessionClick(e, session.name)}
             >
               <span className="session-label">
                 {escapeHtml(session.name)}
@@ -190,13 +192,14 @@ export function Sidebar({
               <span
                 className="close-btn session-close-btn"
                 onClick={(e) => {
+                  e.preventDefault();
                   e.stopPropagation();
                   onCloseSession(session.name);
                 }}
               >
                 &times;
               </span>
-            </div>
+            </a>
           );
         })}
       </div>

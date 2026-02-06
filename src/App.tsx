@@ -76,7 +76,7 @@ export function App() {
   const [currentSession, setCurrentSession] = useState<string | null>(initialState.session);
   const wsRef = useRef<WebSocket | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [sidebarPinned, setSidebarPinned] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(() => sessionStorage.getItem("sidebarPinned") === "true");
   const settings = useSettings();
   const { applyOrder, reorder } = useSessionOrder();
 
@@ -321,7 +321,11 @@ export function App() {
       if (e.metaKey && !e.ctrlKey && e.key === "b") {
         e.preventDefault();
         e.stopPropagation();
-        setSidebarPinned((pinned) => !pinned);
+        setSidebarPinned((pinned) => {
+          const next = !pinned;
+          sessionStorage.setItem("sidebarPinned", String(next));
+          return next;
+        });
       }
     };
     window.addEventListener("keydown", handler, true);
