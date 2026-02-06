@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalView } from "./components/TerminalView";
 import { InputBar } from "./components/InputBar";
+import { CommandPalette } from "./components/CommandPalette";
 import type { TmuxSession, TmuxPane } from "./types";
 import { useSettings } from "./hooks/useSettings";
 
@@ -61,6 +62,7 @@ export function App() {
   const [currentPane, setCurrentPane] = useState<string | null>(initialState.pane);
   const [currentSession, setCurrentSession] = useState<string | null>(initialState.session);
   const wsRef = useRef<WebSocket | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const settings = useSettings();
 
   // Fetch sessions
@@ -211,11 +213,49 @@ export function App() {
     }
   }, []);
 
+  // Cmd+P command palette (capture phase to bypass xterm.js)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+        e.preventDefault();
+        e.stopPropagation();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, []);
+
+  // Create a new tmux session from command palette
+  const handleCreateSession = useCallback(async (name: string, cwd: string) => {
+    try {
+      const res = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, cwd }),
+      });
+      if (res.ok) {
+        await fetchSessions();
+        setCurrentPane(null);
+        setCurrentSession(name);
+      }
+    } catch (err) {
+      console.error("Failed to create session:", err);
+    }
+  }, [fetchSessions]);
+
   // Get current session object
   const session = currentSession ? getSession(currentSession) : null;
 
   return (
     <>
+      <CommandPalette
+        isOpen={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onSelectSession={(name) => { handleSelectSession(name); setPaletteOpen(false); }}
+        onCreateSession={handleCreateSession}
+        existingSessions={sessions.map((s) => s.name)}
+      />
       <div id="sidebar-trigger" />
       <Sidebar
         sessions={sessions}

@@ -356,6 +356,7 @@ export function TerminalView({
 
       ws.onopen = () => {
         reconnectDelay = 1000;
+        terminalInstanceRef.current?.focus();
         if (onRequestRefresh) {
           setTimeout(onRequestRefresh, 200);
         }

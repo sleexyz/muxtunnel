@@ -378,6 +378,13 @@ export function getPaneInfo(target: string): TmuxPane | null {
   }
 }
 
+/**
+ * Create a new tmux session (async)
+ */
+export async function createSessionAsync(name: string, cwd: string): Promise<void> {
+  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", cwd]);
+}
+
 // ─── Async variants (non-blocking, for polling paths) ───────────────────────
 
 /**

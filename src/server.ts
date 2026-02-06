@@ -2,9 +2,12 @@ import http from "node:http";
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
-import { getPaneInfo, isTmuxRunning, killPane, listSessionsAsync, capturePaneAsync, getSessionDimensionsAsync } from "./tmux.js";
+import { getPaneInfo, isTmuxRunning, killPane, listSessionsAsync, capturePaneAsync, getSessionDimensionsAsync, createSessionAsync } from "./tmux.js";
+
+const execFileAsync = promisify(execFileCb);
 import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
 import { getActiveSession, markSessionViewed, startWatching as startClaudeWatching, getPaneCwdAsync, isPaneProcessingAsync } from "./claude-sessions.js";
@@ -132,7 +135,7 @@ const server = http.createServer((req, res) => {
   }
 
   // API endpoints
-  if (url.pathname === "/api/sessions") {
+  if (url.pathname === "/api/sessions" && req.method === "GET") {
     getSessionsWithAttention().then((sessions) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(sessions));
@@ -140,6 +143,47 @@ const server = http.createServer((req, res) => {
       console.error("Failed to get sessions:", err);
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Failed to get sessions" }));
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/sessions" && req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", async () => {
+      try {
+        const { name, cwd } = JSON.parse(body);
+        if (typeof name !== "string" || typeof cwd !== "string") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "name and cwd are required" }));
+          return;
+        }
+        await createSessionAsync(name, cwd);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/zoxide" && req.method === "GET") {
+    execFileAsync("zoxide", ["query", "--list", "--score"], { encoding: "utf-8" }).then(({ stdout }) => {
+      const entries = stdout.trim().split("\n").filter(Boolean).map((line) => {
+        const match = line.trim().match(/^\s*([\d.]+)\s+(.+)$/);
+        if (!match) return null;
+        const score = parseFloat(match[1]);
+        const fullPath = match[2];
+        const name = path.basename(fullPath);
+        return { score, path: fullPath, name };
+      }).filter(Boolean);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(entries));
+    }).catch((err) => {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
     });
     return;
   }
