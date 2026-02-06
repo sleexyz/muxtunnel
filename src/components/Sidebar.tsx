@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { TmuxSession, TmuxWindow, TmuxPane } from "../types";
+import type { TmuxSession, TmuxPane } from "../types";
 
 interface SidebarProps {
   sessions: TmuxSession[];
@@ -20,6 +20,64 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** Flatten all panes from a session, ordered by window then pane index. */
+function getAllPanes(session: TmuxSession): TmuxPane[] {
+  const panes: TmuxPane[] = [];
+  for (const w of session.windows) {
+    for (const p of w.panes) {
+      panes.push(p);
+    }
+  }
+  return panes;
+}
+
+type DotKind =
+  | "normal"
+  | "claude-active"
+  | "claude-thinking"
+  | "claude-done"
+  | "attention"
+  | "claude-attention";
+
+function getDotKind(pane: TmuxPane): DotKind {
+  const isClaude = pane.process === "claude";
+  const needsAttention = !!pane.needsAttention;
+
+  if (isClaude && needsAttention) return "claude-attention";
+  if (needsAttention) return "attention";
+  if (isClaude) {
+    const status = pane.claudeSession?.status;
+    if (status === "thinking") return "claude-thinking";
+    if (pane.claudeSession?.notified) return "claude-done";
+    return "claude-active";
+  }
+  return "normal";
+}
+
+function dotClassName(kind: DotKind): string {
+  const base = "pane-dot";
+  switch (kind) {
+    case "normal":
+      return base;
+    case "claude-active":
+      return `${base} dot-claude`;
+    case "claude-thinking":
+      return `${base} dot-claude dot-thinking`;
+    case "claude-done":
+      return `${base} dot-claude dot-done`;
+    case "attention":
+      return `${base} dot-attention`;
+    case "claude-attention":
+      return `${base} dot-claude dot-attention`;
+  }
+}
+
+function dotTooltip(pane: TmuxPane): string {
+  const proc = pane.process || "unknown";
+  const target = `${pane.windowIndex}.${pane.paneIndex}`;
+  return `${proc} (${target})`;
 }
 
 export function Sidebar({
@@ -51,8 +109,6 @@ export function Sidebar({
   const dragIndexRef = useRef<number | null>(null);
   const [dropTarget, setDropTarget] = useState<number | null>(null);
 
-  // Collapse sidebar by briefly disabling pointer-events so the
-  // mouse-leave fires immediately and the sidebar hides.
   const collapseSidebar = () => {
     const el = sidebarRef.current;
     if (!el) return;
@@ -62,13 +118,17 @@ export function Sidebar({
     }, 100);
   };
 
-  const handlePaneClick = (pane: TmuxPane) => {
-    if (pane.target !== currentPane) {
-      onSelectPane(pane.target);
-      if (pane.claudeSession?.notified) {
-        onMarkViewed(pane.claudeSession.sessionId);
-      }
+  const handleDotClick = (e: React.MouseEvent, pane: TmuxPane) => {
+    e.stopPropagation();
+    onSelectPane(pane.target);
+    if (pane.claudeSession?.notified) {
+      onMarkViewed(pane.claudeSession.sessionId);
     }
+    if (!pinned) collapseSidebar();
+  };
+
+  const handleSessionClick = (sessionName: string) => {
+    onSelectSession(sessionName);
     if (!pinned) collapseSidebar();
   };
 
@@ -76,12 +136,12 @@ export function Sidebar({
     <div id="sidebar" className={pinned ? "pinned" : ""} ref={sidebarRef}>
       <div id="sessions-list">
         {sessions.map((session, idx) => {
-          const isSessionSelected =
-            currentSession === session.name && currentPane === null;
+          const isSelected = currentSession === session.name;
+          const panes = getAllPanes(session);
 
           return (
             <div
-              className={`session-group${dropTarget === idx ? " drop-target" : ""}${dragIndexRef.current === idx ? " dragging" : ""}`}
+              className={`session-row${isSelected ? " selected" : ""}${dropTarget === idx ? " drop-target" : ""}${dragIndexRef.current === idx ? " dragging" : ""}`}
               key={session.name}
               draggable
               onDragStart={(e) => {
@@ -111,61 +171,36 @@ export function Sidebar({
                 dragIndexRef.current = null;
                 setDropTarget(null);
               }}
+              onClick={() => handleSessionClick(session.name)}
             >
-              <div
-                className={`session-name clickable ${isSessionSelected ? "selected" : ""}`}
-                onClick={() => { onSelectSession(session.name); if (!pinned) collapseSidebar(); }}
-              >
+              <span className="session-label">
                 {escapeHtml(session.name)}
-                <span
-                  className="close-btn session-close-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseSession(session.name);
-                  }}
-                >
-                  &times;
-                </span>
-              </div>
+              </span>
 
-              {session.windows.map((window: TmuxWindow) =>
-                window.panes.map((pane: TmuxPane) => {
-                  const isSelected = pane.target === currentPane;
-                  const hasNotification = pane.claudeSession?.notified;
-                  const claudeStatus = pane.claudeSession?.status;
-                  const isClaude = pane.process === "claude";
-
+              <span className="session-dots">
+                {panes.map((pane) => {
+                  const kind = getDotKind(pane);
+                  const isActiveDot = pane.target === currentPane;
                   return (
-                    <div
+                    <span
                       key={pane.target}
-                      className={`pane-item ${isSelected ? "selected" : ""} ${hasNotification ? "needs-attention" : ""} ${isClaude ? "is-claude" : ""}`}
-                      onClick={() => handlePaneClick(pane)}
-                    >
-                      {hasNotification && <span className="notification-dot" />}
-                      <span className="pane-info">
-                        <span className="pane-process">
-                          {escapeHtml(pane.process || "")}
-                          {claudeStatus === "thinking" ? " ..." : ""}
-                        </span>
-                      </span>
-                      <span className="pane-actions">
-                        {pane.needsAttention && (
-                          <span className="attention-badge">!</span>
-                        )}
-                        <span
-                          className="close-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onClosePane(pane.target);
-                          }}
-                        >
-                          &times;
-                        </span>
-                      </span>
-                    </div>
+                      className={`${dotClassName(kind)}${isActiveDot ? " dot-selected" : ""}`}
+                      title={dotTooltip(pane)}
+                      onClick={(e) => handleDotClick(e, pane)}
+                    />
                   );
-                })
-              )}
+                })}
+              </span>
+
+              <span
+                className="close-btn session-close-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseSession(session.name);
+                }}
+              >
+                &times;
+              </span>
             </div>
           );
         })}
