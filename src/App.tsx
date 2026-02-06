@@ -7,10 +7,26 @@ import type { TmuxSession, TmuxPane } from "./types";
 import { useSettings } from "./hooks/useSettings";
 import { useSessionOrder } from "./hooks/useSessionOrder";
 
-// Get session from URL query param
-function getSessionFromUrl(): string | null {
+// Reserved path segments that should not be treated as session names
+const RESERVED_PATHS = new Set(["api", "ws", "assets"]);
+
+// Migrate old ?session= URLs to path-based URLs
+(function migrateOldUrl() {
   const params = new URLSearchParams(window.location.search);
-  return params.get("session");
+  const session = params.get("session");
+  if (session) {
+    params.delete("session");
+    const newPath = `/${encodeURIComponent(session)}`;
+    const qs = params.toString();
+    window.history.replaceState({}, "", newPath + (qs ? `?${qs}` : ""));
+  }
+})();
+
+// Get session from URL pathname
+function getSessionFromUrl(): string | null {
+  const segment = window.location.pathname.split("/")[1];
+  if (!segment || RESERVED_PATHS.has(segment)) return null;
+  return decodeURIComponent(segment);
 }
 
 // Get pane from URL query param
@@ -30,21 +46,16 @@ function paneToAbsolute(pane: string, session: string): string {
   return pane.includes(":") ? pane : `${session}:${pane}`;
 }
 
-// Update URL without refresh
+// Update URL without refresh — path-based session routing
 function updateUrl(session: string | null, pane: string | null) {
-  const url = new URL(window.location.href);
-  if (session) {
-    url.searchParams.set("session", session);
-  } else {
-    url.searchParams.delete("session");
-  }
+  const params = new URLSearchParams();
+  // Never keep legacy ?session param
   if (pane) {
-    // Store pane as relative when session is present
-    url.searchParams.set("pane", session ? paneToRelative(pane) : pane);
-  } else {
-    url.searchParams.delete("pane");
+    params.set("pane", session ? paneToRelative(pane) : pane);
   }
-  window.history.pushState({}, "", url.toString());
+  const pathname = session ? `/${encodeURIComponent(session)}` : "/";
+  const qs = params.toString();
+  window.history.pushState({}, "", pathname + (qs ? `?${qs}` : ""));
 }
 
 // Read initial state from URL (pane converted to absolute if needed)
@@ -67,6 +78,9 @@ export function App() {
   const [sidebarPinned, setSidebarPinned] = useState(false);
   const settings = useSettings();
   const { applyOrder, reorder } = useSessionOrder();
+
+  const [autoCreateAttempted, setAutoCreateAttempted] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
 
   // Sessions in user-defined order for sidebar/palette display
   const orderedSessions = applyOrder(sessions);
@@ -106,6 +120,53 @@ export function App() {
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
+
+  // Auto-create session via zoxide when navigating to a non-existent session
+  useEffect(() => {
+    if (!currentSession) return;
+    if (sessions.length === 0) return; // Still loading
+    const exists = sessions.some((s) => s.name === currentSession);
+    if (exists) return;
+    if (autoCreateAttempted === currentSession) return;
+
+    setAutoCreateAttempted(currentSession);
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/zoxide/${encodeURIComponent(currentSession)}`);
+        if (!res.ok) {
+          setErrorToast(`No zoxide match for "${currentSession}"`);
+          return;
+        }
+        const { path: cwd, name: resolvedName } = await res.json();
+        // Redirect to canonical name if the input was a fuzzy/partial match
+        const sessionName = resolvedName || currentSession;
+        if (sessionName !== currentSession) {
+          setCurrentSession(sessionName);
+          return;
+        }
+        const createRes = await fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: sessionName, cwd }),
+        });
+        if (!createRes.ok) {
+          setErrorToast(`Failed to create session "${sessionName}"`);
+          return;
+        }
+        await fetchSessions();
+      } catch (err) {
+        setErrorToast(`Error creating session: ${err}`);
+      }
+    })();
+  }, [currentSession, sessions, autoCreateAttempted, fetchSessions]);
+
+  // Auto-dismiss error toast
+  useEffect(() => {
+    if (!errorToast) return;
+    const timer = setTimeout(() => setErrorToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [errorToast]);
 
   // Update URL when session or pane changes (skip on popstate-triggered changes)
   useEffect(() => {
@@ -289,6 +350,15 @@ export function App() {
 
   return (
     <>
+      {errorToast && (
+        <div style={{
+          position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+          background: "#dc2626", color: "white", padding: "8px 16px",
+          borderRadius: 6, zIndex: 9999, fontSize: 14, whiteSpace: "nowrap",
+        }}>
+          {errorToast}
+        </div>
+      )}
       <CommandPalette
         isOpen={paletteOpen}
         onClose={() => setPaletteOpen(false)}

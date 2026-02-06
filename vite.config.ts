@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 const SERVER_PORT = parseInt(process.env.PORT || "3002", 10);
 
 export default defineConfig({
+  appType: "spa",
   plugins: [react()],
   server: {
     port: 5181,

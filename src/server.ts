@@ -189,6 +189,26 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // GET /api/zoxide/:name - resolve a single name via zoxide query
+  const zoxideNameMatch = url.pathname.match(/^\/api\/zoxide\/([^/]+)$/);
+  if (zoxideNameMatch && req.method === "GET") {
+    const name = decodeURIComponent(zoxideNameMatch[1]);
+    execFileAsync("zoxide", ["query", name], { encoding: "utf-8" }).then(({ stdout }) => {
+      const resolvedPath = stdout.trim();
+      if (!resolvedPath) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "No match" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ path: resolvedPath, name: path.basename(resolvedPath) }));
+    }).catch(() => {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No zoxide match" }));
+    });
+    return;
+  }
+
   if (url.pathname === "/api/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
