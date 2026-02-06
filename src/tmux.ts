@@ -393,9 +393,17 @@ export function getPaneInfo(target: string): TmuxPane | null {
 }
 
 /**
- * Create a new tmux session (async)
+ * Create a new tmux session (async).
+ * No-ops if the session already exists (idempotent).
  */
 export async function createSessionAsync(name: string, cwd: string): Promise<void> {
+  try {
+    await execFileAsync("tmux", ["has-session", "-t", name]);
+    // Session already exists — nothing to do
+    return;
+  } catch {
+    // Session doesn't exist — create it
+  }
   await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", cwd]);
 }
 

@@ -278,6 +278,10 @@ export function App() {
           method: "DELETE",
         });
         if (res.ok) {
+          // Optimistically remove from local state BEFORE clearing currentSession.
+          // This prevents the auto-select effect from re-picking the deleted session
+          // from stale data, which would then trigger auto-create to recreate it.
+          setSessions((prev) => prev.filter((s) => s.name !== name));
           if (currentSession === name) {
             setCurrentSession(null);
             setCurrentPane(null);
