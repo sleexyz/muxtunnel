@@ -79,6 +79,7 @@ export function TerminalView({
       const { width, height } = session.dimensions;
 
       cropContainerRef.current.style.width = `${width * dims.width}px`;
+      // Crop to content area only (excludes tmux status bar)
       cropContainerRef.current.style.height = `${height * dims.height}px`;
       positionerRef.current.style.transform = "translate(0, 0)";
     },
@@ -108,6 +109,9 @@ export function TerminalView({
     lastFontKeyRef.current = fontKey;
 
     const { width: cols, height: rows } = session.dimensions;
+    // Extra row for the tmux status bar so attaching doesn't shrink the content
+    // area and invalidate the pane dimensions we already have from the API.
+    const termRows = rows + 1;
 
     // Close existing WebSocket
     if (wsRef.current) {
@@ -124,7 +128,7 @@ export function TerminalView({
     // Create terminal at fixed session size
     const terminal = new Terminal({
       cols,
-      rows,
+      rows: termRows,
       cursorBlink: true,
       fontSize,
       fontFamily,
@@ -161,7 +165,7 @@ export function TerminalView({
       if (core?._renderService?.dimensions?.css?.cell) {
         const dims = core._renderService.dimensions.css.cell;
         const fullWidth = cols * dims.width;
-        const fullHeight = rows * dims.height;
+        const fullHeight = termRows * dims.height;
 
         if (terminalRef.current) {
           terminalRef.current.style.width = `${fullWidth}px`;
@@ -193,7 +197,7 @@ export function TerminalView({
       if (wsGenerationRef.current !== generation || !paneTarget) return;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(paneTarget)}&cols=${cols}&rows=${rows}`;
+      const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(paneTarget)}&cols=${cols}&rows=${termRows}`;
 
       const ws = new WebSocket(wsUrl);
       ws.binaryType = "arraybuffer";
