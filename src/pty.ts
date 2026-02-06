@@ -29,6 +29,8 @@ export interface PtySession extends EventEmitter {
   close(): void;
   /** Target pane identifier */
   readonly target: string;
+  /** Child process PID (the tmux client process) */
+  readonly pid: number;
 }
 
 /**
@@ -89,6 +91,7 @@ export function createPtySession(options: PtySessionOptions): PtySession {
 
   // Attach methods
   (emitter as any).target = target;
+  (emitter as any).pid = pty.pid;
 
   emitter.write = (data: string | Buffer) => {
     pty.write.write(data);

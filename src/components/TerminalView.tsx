@@ -12,6 +12,7 @@ interface TerminalViewProps {
   wsRef: React.MutableRefObject<WebSocket | null>;
   settings: MuxTunnelSettings;
   onRequestRefresh?: () => void;
+  onSessionChanged?: (sessionName: string) => void;
 }
 
 interface CellDimensions {
@@ -39,6 +40,7 @@ export function TerminalView({
   wsRef,
   settings,
   onRequestRefresh,
+  onSessionChanged,
 }: TerminalViewProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
@@ -50,9 +52,11 @@ export function TerminalView({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerSizeRef = useRef<{ width: number; height: number } | null>(null);
   const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const onSessionChangedRef = useRef(onSessionChanged);
+  onSessionChangedRef.current = onSessionChanged;
 
   const fontKey = useMemo(() => {
-    const fontSize = settings.terminal?.fontSize ?? 14;
+    const fontSize = settings.terminal?.fontSize ?? 12;
     const fontFamily = settings.terminal?.fontFamily ?? 'Menlo, Monaco, "Courier New", monospace';
     return `${fontSize}|${fontFamily}`;
   }, [settings.terminal?.fontSize, settings.terminal?.fontFamily]);
@@ -202,7 +206,7 @@ export function TerminalView({
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    const fontSize = settings.terminal?.fontSize ?? 14;
+    const fontSize = settings.terminal?.fontSize ?? 12;
     const fontFamily = settings.terminal?.fontFamily ?? 'Menlo, Monaco, "Courier New", monospace';
 
     // Measure cell dimensions before creating terminal
@@ -371,10 +375,14 @@ export function TerminalView({
           term.write(new Uint8Array(event.data));
           return;
         }
-        try {
-          JSON.parse(event.data);
-        } catch {
-          if (typeof event.data === "string") {
+        if (typeof event.data === "string") {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "session-changed" && msg.session) {
+              onSessionChangedRef.current?.(msg.session);
+              return;
+            }
+          } catch {
             term.write(event.data);
           }
         }
