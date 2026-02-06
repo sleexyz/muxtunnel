@@ -216,6 +216,7 @@ export function App() {
 
   return (
     <>
+      <div id="sidebar-trigger" />
       <Sidebar
         sessions={sessions}
         currentPane={currentPane}
@@ -232,6 +233,7 @@ export function App() {
           sessions={sessions}
           wsRef={wsRef}
           settings={settings}
+          onRequestRefresh={fetchSessions}
         />
         {currentPane && <InputBar target={currentPane} />}
       </div>

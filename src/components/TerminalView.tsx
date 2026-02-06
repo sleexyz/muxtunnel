@@ -11,11 +11,25 @@ interface TerminalViewProps {
   sessions: TmuxSession[];
   wsRef: React.MutableRefObject<WebSocket | null>;
   settings: MuxTunnelSettings;
+  onRequestRefresh?: () => void;
 }
 
 interface CellDimensions {
   width: number;
   height: number;
+}
+
+/** Measure cell dimensions using Canvas API — synchronous, no DOM mount needed. */
+function measureCellDimensions(fontSize: number, fontFamily: string): CellDimensions {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  const metrics = ctx.measureText("W");
+  const width = metrics.width;
+  const height =
+    (metrics.fontBoundingBoxAscent ?? fontSize * 0.8) +
+    (metrics.fontBoundingBoxDescent ?? fontSize * 0.2);
+  return { width, height };
 }
 
 export function TerminalView({
@@ -24,16 +38,20 @@ export function TerminalView({
   sessions,
   wsRef,
   settings,
+  onRequestRefresh,
 }: TerminalViewProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
   const cropContainerRef = useRef<HTMLDivElement>(null);
   const positionerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [cellDimensions, setCellDimensions] = useState<CellDimensions | null>(null);
   const lastSessionRef = useRef<string | null>(null);
   const lastFontKeyRef = useRef<string>("");
   const wsGenerationRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
   const findPane = useCallback(
     (target: string): TmuxPane | null => {
@@ -49,6 +67,24 @@ export function TerminalView({
       return null;
     },
     [sessions]
+  );
+
+  // Compute cols/rows from container size, cell dims, and settings
+  const computeSize = useCallback(
+    (containerWidth: number, containerHeight: number, cellDims: CellDimensions) => {
+      const padding = settings.window?.padding ?? 0;
+      const margin = settings.window?.margin ?? 0;
+      const border = 1;
+      const inset = padding + margin + border;
+      const availableWidth = containerWidth - 2 * inset;
+      const availableHeight = containerHeight - 2 * inset;
+
+      const cols = Math.max(20, Math.floor(availableWidth / cellDims.width));
+      const totalRows = Math.max(6, Math.floor(availableHeight / cellDims.height));
+      // totalRows includes the tmux status bar row
+      return { cols, totalRows };
+    },
+    [settings.window?.padding, settings.window?.margin]
   );
 
   // Apply crop to show only the selected pane
@@ -86,13 +122,76 @@ export function TerminalView({
     [session]
   );
 
+  // ResizeObserver: track wrapper size and live-resize terminal
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      containerSizeRef.current = { width, height };
+
+      // Debounced live resize of existing terminal
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const terminal = terminalInstanceRef.current;
+        const dims = cellDimensions;
+        if (!terminal || !dims) return;
+
+        const { cols, totalRows } = computeSize(width, height, dims);
+        const contentRows = totalRows - 1; // subtract tmux status row
+
+        const last = lastSentSizeRef.current;
+        if (last && last.cols === cols && last.rows === totalRows) return;
+
+        // Resize xterm.js
+        terminal.resize(cols, totalRows);
+        lastSentSizeRef.current = { cols, rows: totalRows };
+
+        // Update DOM sizes
+        const fullWidth = cols * dims.width;
+        const fullHeight = totalRows * dims.height;
+        if (terminalRef.current) {
+          terminalRef.current.style.width = `${fullWidth}px`;
+          terminalRef.current.style.height = `${fullHeight}px`;
+        }
+        if (positionerRef.current) {
+          positionerRef.current.style.width = `${fullWidth}px`;
+          positionerRef.current.style.height = `${fullHeight}px`;
+        }
+
+        // Update crop container for full session view
+        if (cropContainerRef.current) {
+          cropContainerRef.current.style.width = `${cols * dims.width}px`;
+          cropContainerRef.current.style.height = `${contentRows * dims.height}px`;
+        }
+
+        // Send resize over existing WebSocket
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", cols, rows: totalRows }));
+          // Trigger immediate session refresh after tmux reflows
+          if (onRequestRefresh) {
+            setTimeout(onRequestRefresh, 200);
+          }
+        }
+      }, 150);
+    });
+
+    observer.observe(wrapper);
+    return () => {
+      observer.disconnect();
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  }, [cellDimensions, computeSize, wsRef, onRequestRefresh]);
+
   // Initialize terminal and connect WebSocket when session changes
   useEffect(() => {
     if (!session || !terminalRef.current) {
-      return;
-    }
-
-    if (!session.dimensions) {
       return;
     }
 
@@ -108,10 +207,17 @@ export function TerminalView({
     lastSessionRef.current = session.name;
     lastFontKeyRef.current = fontKey;
 
-    const { width: cols, height: rows } = session.dimensions;
-    // Extra row for the tmux status bar so attaching doesn't shrink the content
-    // area and invalidate the pane dimensions we already have from the API.
-    const termRows = rows + 1;
+    // Measure cell dimensions before creating terminal
+    const canvasCellDims = measureCellDimensions(fontSize, fontFamily);
+
+    // Compute cols/rows from viewport
+    const container = containerSizeRef.current;
+    // Use wrapper element size if ResizeObserver hasn't fired yet
+    const wrapperEl = wrapperRef.current;
+    const containerWidth = container?.width ?? wrapperEl?.clientWidth ?? 800;
+    const containerHeight = container?.height ?? wrapperEl?.clientHeight ?? 600;
+
+    const { cols, totalRows } = computeSize(containerWidth, containerHeight, canvasCellDims);
 
     // Close existing WebSocket
     if (wsRef.current) {
@@ -125,10 +231,10 @@ export function TerminalView({
     }
     terminalRef.current.innerHTML = "";
 
-    // Create terminal at fixed session size
+    // Create terminal at viewport-computed size
     const terminal = new Terminal({
       cols,
-      rows: termRows,
+      rows: totalRows,
       cursorBlink: true,
       fontSize,
       fontFamily,
@@ -157,26 +263,50 @@ export function TerminalView({
       }
     });
 
-    // Set dimensions after render
+    // Set dimensions after render — use actual renderer cell dims if available
     requestAnimationFrame(() => {
       if (!terminal) return;
 
+      let dims = canvasCellDims;
       const core = (terminal as any)._core;
       if (core?._renderService?.dimensions?.css?.cell) {
-        const dims = core._renderService.dimensions.css.cell;
-        const fullWidth = cols * dims.width;
-        const fullHeight = termRows * dims.height;
+        dims = core._renderService.dimensions.css.cell;
+      }
 
-        if (terminalRef.current) {
-          terminalRef.current.style.width = `${fullWidth}px`;
-          terminalRef.current.style.height = `${fullHeight}px`;
-        }
-        if (positionerRef.current) {
-          positionerRef.current.style.width = `${fullWidth}px`;
-          positionerRef.current.style.height = `${fullHeight}px`;
-        }
+      const fullWidth = cols * dims.width;
+      const fullHeight = totalRows * dims.height;
 
-        setCellDimensions({ width: dims.width, height: dims.height });
+      if (terminalRef.current) {
+        terminalRef.current.style.width = `${fullWidth}px`;
+        terminalRef.current.style.height = `${fullHeight}px`;
+      }
+      if (positionerRef.current) {
+        positionerRef.current.style.width = `${fullWidth}px`;
+        positionerRef.current.style.height = `${fullHeight}px`;
+      }
+
+      setCellDimensions({ width: dims.width, height: dims.height });
+      lastSentSizeRef.current = { cols, rows: totalRows };
+
+      // If the actual renderer cell dims differ from canvas measurement, we may
+      // need different cols/rows. Recalculate and send a resize if needed.
+      if (dims !== canvasCellDims) {
+        const corrected = computeSize(containerWidth, containerHeight, dims);
+        if (corrected.cols !== cols || corrected.totalRows !== totalRows) {
+          terminal.resize(corrected.cols, corrected.totalRows);
+          lastSentSizeRef.current = { cols: corrected.cols, rows: corrected.totalRows };
+
+          const correctedFullWidth = corrected.cols * dims.width;
+          const correctedFullHeight = corrected.totalRows * dims.height;
+          if (terminalRef.current) {
+            terminalRef.current.style.width = `${correctedFullWidth}px`;
+            terminalRef.current.style.height = `${correctedFullHeight}px`;
+          }
+          if (positionerRef.current) {
+            positionerRef.current.style.width = `${correctedFullWidth}px`;
+            positionerRef.current.style.height = `${correctedFullHeight}px`;
+          }
+        }
       }
     });
 
@@ -196,8 +326,12 @@ export function TerminalView({
     function connect() {
       if (wsGenerationRef.current !== generation || !paneTarget) return;
 
+      const currentSize = lastSentSizeRef.current;
+      const wsCols = currentSize?.cols ?? cols;
+      const wsRows = currentSize?.rows ?? totalRows;
+
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(paneTarget)}&cols=${cols}&rows=${termRows}`;
+      const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(paneTarget)}&cols=${wsCols}&rows=${wsRows}`;
 
       const ws = new WebSocket(wsUrl);
       ws.binaryType = "arraybuffer";
@@ -205,6 +339,10 @@ export function TerminalView({
 
       ws.onopen = () => {
         reconnectDelay = 1000;
+        // Trigger refresh so tmux geometry is picked up after connect
+        if (onRequestRefresh) {
+          setTimeout(onRequestRefresh, 200);
+        }
       };
 
       ws.onmessage = (event) => {
@@ -244,7 +382,7 @@ export function TerminalView({
     }
 
     connect();
-  }, [session, currentPane, wsRef, settings]);
+  }, [session, currentPane, wsRef, settings, computeSize, onRequestRefresh]);
 
   // Cleanup WebSocket and reconnect timers on unmount
   useEffect(() => {
@@ -297,11 +435,23 @@ export function TerminalView({
   ) : null;
 
   const windowPadding = settings.window?.padding;
-  const frameStyle = windowPadding ? { padding: windowPadding, background: "#1e1e1e", position: "relative" as const, zIndex: 1 } : undefined;
+  const windowMargin = settings.window?.margin;
+  const hasFrame = windowPadding || windowMargin;
+  const frameStyle = hasFrame ? {
+    padding: windowPadding,
+    margin: windowMargin,
+    background: "#1e1e1e",
+    position: "relative" as const,
+    zIndex: 1,
+    borderRadius: 10,
+    boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    overflow: "hidden" as const,
+  } : undefined;
 
   if (!session) {
     return (
-      <div id="terminal-wrapper">
+      <div id="terminal-wrapper" ref={wrapperRef}>
         {backgroundDiv}
         <div className="no-selection">Select a pane from the sidebar</div>
       </div>
@@ -317,9 +467,9 @@ export function TerminalView({
   );
 
   return (
-    <div id="terminal-wrapper">
+    <div id="terminal-wrapper" ref={wrapperRef}>
       {backgroundDiv}
-      {frameStyle ? <div style={frameStyle}>{cropContainer}</div> : cropContainer}
+      {hasFrame ? <div style={frameStyle}>{cropContainer}</div> : cropContainer}
     </div>
   );
 }
