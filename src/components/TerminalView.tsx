@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { TmuxSession, TmuxPane } from "../types";
@@ -46,12 +46,16 @@ export function TerminalView({
   const positionerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [cellDimensions, setCellDimensions] = useState<CellDimensions | null>(null);
-  const lastSessionRef = useRef<string | null>(null);
-  const lastFontKeyRef = useRef<string>("");
   const wsGenerationRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerSizeRef = useRef<{ width: number; height: number } | null>(null);
   const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+
+  const fontKey = useMemo(() => {
+    const fontSize = settings.terminal?.fontSize ?? 14;
+    const fontFamily = settings.terminal?.fontFamily ?? 'Menlo, Monaco, "Courier New", monospace';
+    return `${fontSize}|${fontFamily}`;
+  }, [settings.terminal?.fontSize, settings.terminal?.fontFamily]);
 
   const findPane = useCallback(
     (target: string): TmuxPane | null => {
@@ -189,41 +193,28 @@ export function TerminalView({
     };
   }, [cellDimensions, computeSize, wsRef, onRequestRefresh]);
 
-  // Initialize terminal and connect WebSocket when session changes
-  useEffect(() => {
-    if (!session || !terminalRef.current) {
-      return;
-    }
+  // Track whether the terminal container div is in the DOM
+  // (it's conditionally rendered — absent when session is null)
+  const hasSession = !!session;
 
-    // Detect font settings changes
+  // Effect 1: Terminal creation (font-dependent only)
+  // Reused across session switches — only recreated when font settings change.
+  useEffect(() => {
+    if (!terminalRef.current) return;
+
     const fontSize = settings.terminal?.fontSize ?? 14;
     const fontFamily = settings.terminal?.fontFamily ?? 'Menlo, Monaco, "Courier New", monospace';
-    const fontKey = `${fontSize}|${fontFamily}`;
-
-    // Only reinitialize if session or font settings changed
-    if (lastSessionRef.current === session.name && lastFontKeyRef.current === fontKey && terminalInstanceRef.current) {
-      return;
-    }
-    lastSessionRef.current = session.name;
-    lastFontKeyRef.current = fontKey;
 
     // Measure cell dimensions before creating terminal
     const canvasCellDims = measureCellDimensions(fontSize, fontFamily);
 
     // Compute cols/rows from viewport
     const container = containerSizeRef.current;
-    // Use wrapper element size if ResizeObserver hasn't fired yet
     const wrapperEl = wrapperRef.current;
     const containerWidth = container?.width ?? wrapperEl?.clientWidth ?? 800;
     const containerHeight = container?.height ?? wrapperEl?.clientHeight ?? 600;
 
     const { cols, totalRows } = computeSize(containerWidth, containerHeight, canvasCellDims);
-
-    // Close existing WebSocket
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
 
     // Dispose existing terminal
     if (terminalInstanceRef.current) {
@@ -255,13 +246,16 @@ export function TerminalView({
     terminal.open(terminalRef.current);
     terminalInstanceRef.current = terminal;
 
-    // Handle user input - send to WebSocket
+    // Handle user input — reads wsRef dynamically, no closure capture issue
     terminal.onData((data) => {
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "keys", keys: data }));
       }
     });
+
+    // Synchronously set lastSentSize so Effect 2 can read it immediately
+    lastSentSizeRef.current = { cols, rows: totalRows };
 
     // Set dimensions after render — use actual renderer cell dims if available
     requestAnimationFrame(() => {
@@ -310,15 +304,39 @@ export function TerminalView({
       }
     });
 
-    // Connect WebSocket with auto-reconnection
-    const paneTarget = currentPane || session.windows[0]?.panes[0]?.target;
+    return () => {
+      if (terminalInstanceRef.current) {
+        terminalInstanceRef.current.dispose();
+        terminalInstanceRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSession, fontKey, computeSize, wsRef]);
+
+  // Effect 2: WebSocket connection (session/pane-dependent)
+  // Reuses existing terminal instance — just reset + reconnect.
+  useEffect(() => {
+    const terminal = terminalInstanceRef.current;
+    if (!terminal || !session) return;
+
+    // Invalidate old WS callbacks
     const generation = ++wsGenerationRef.current;
 
-    // Cancel any pending reconnect from a previous connection
+    // Tear down existing connection
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    // Clear buffer so old session content doesn't flash
+    terminal.reset();
+
+    const paneTarget = currentPane || session.windows[0]?.panes[0]?.target;
+    const currentSize = lastSentSizeRef.current;
 
     let reconnectDelay = 1000;
     const MAX_RECONNECT_DELAY = 10_000;
@@ -326,9 +344,8 @@ export function TerminalView({
     function connect() {
       if (wsGenerationRef.current !== generation || !paneTarget) return;
 
-      const currentSize = lastSentSizeRef.current;
-      const wsCols = currentSize?.cols ?? cols;
-      const wsRows = currentSize?.rows ?? totalRows;
+      const wsCols = currentSize?.cols ?? 80;
+      const wsRows = currentSize?.rows ?? 24;
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(paneTarget)}&cols=${wsCols}&rows=${wsRows}`;
@@ -339,37 +356,40 @@ export function TerminalView({
 
       ws.onopen = () => {
         reconnectDelay = 1000;
-        // Trigger refresh so tmux geometry is picked up after connect
         if (onRequestRefresh) {
           setTimeout(onRequestRefresh, 200);
         }
       };
 
       ws.onmessage = (event) => {
+        if (wsGenerationRef.current !== generation) return;
+        const term = terminalInstanceRef.current;
+        if (!term) return;
+
         if (event.data instanceof ArrayBuffer) {
-          terminal.write(new Uint8Array(event.data));
+          term.write(new Uint8Array(event.data));
           return;
         }
         try {
           JSON.parse(event.data);
         } catch {
           if (typeof event.data === "string") {
-            terminal.write(event.data);
+            term.write(event.data);
           }
         }
       };
 
       ws.onclose = (event) => {
         if (wsGenerationRef.current !== generation) return;
+        const term = terminalInstanceRef.current;
 
-        // Don't reconnect on permanent server-side rejections (4xxx codes)
         if (event.code >= 4000 && event.code < 5000) {
-          terminal.write(`\r\n\x1b[31m[Connection closed: ${event.reason || "server rejected"}]\x1b[0m\r\n`);
+          term?.write(`\r\n\x1b[31m[Connection closed: ${event.reason || "server rejected"}]\x1b[0m\r\n`);
           return;
         }
 
         console.warn(`[WS] closed (code: ${event.code}, reason: ${event.reason || "none"})`);
-        terminal.write("\r\n\x1b[33m[Reconnecting...]\x1b[0m");
+        term?.write("\r\n\x1b[33m[Reconnecting...]\x1b[0m");
         reconnectTimerRef.current = setTimeout(() => {
           reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
           connect();
@@ -382,10 +402,7 @@ export function TerminalView({
     }
 
     connect();
-  }, [session, currentPane, wsRef, settings, computeSize, onRequestRefresh]);
 
-  // Cleanup WebSocket and reconnect timers on unmount
-  useEffect(() => {
     return () => {
       wsGenerationRef.current++;
       if (reconnectTimerRef.current) {
@@ -397,7 +414,7 @@ export function TerminalView({
         wsRef.current = null;
       }
     };
-  }, [wsRef]);
+  }, [session?.name, currentPane, fontKey, wsRef, onRequestRefresh]);
 
   // Apply crop when pane or cell dimensions change
   useEffect(() => {
