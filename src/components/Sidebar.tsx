@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { TmuxSession, TmuxWindow, TmuxPane } from "../types";
 
 interface SidebarProps {
@@ -40,6 +41,18 @@ export function Sidebar({
     );
   }
 
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  // Collapse sidebar by briefly disabling pointer-events so hover state drops
+  const collapseSidebar = () => {
+    const el = sidebarRef.current;
+    if (!el) return;
+    el.style.pointerEvents = "none";
+    requestAnimationFrame(() => {
+      el.style.pointerEvents = "";
+    });
+  };
+
   const handlePaneClick = (pane: TmuxPane) => {
     if (pane.target !== currentPane) {
       onSelectPane(pane.target);
@@ -47,10 +60,11 @@ export function Sidebar({
         onMarkViewed(pane.claudeSession.sessionId);
       }
     }
+    collapseSidebar();
   };
 
   return (
-    <div id="sidebar">
+    <div id="sidebar" ref={sidebarRef}>
       <div id="sessions-list">
         {sessions.map((session) => {
           const isSessionSelected =
@@ -60,7 +74,7 @@ export function Sidebar({
             <div className="session-group" key={session.name}>
               <div
                 className={`session-name clickable ${isSessionSelected ? "selected" : ""}`}
-                onClick={() => onSelectSession(session.name)}
+                onClick={() => { onSelectSession(session.name); collapseSidebar(); }}
               >
                 {escapeHtml(session.name)}
               </div>
