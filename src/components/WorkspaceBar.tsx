@@ -20,24 +20,13 @@ function getAllPanes(session: TmuxSession): TmuxPane[] {
   return panes;
 }
 
-type DotKind =
-  | "normal"
-  | "claude-thinking"
-  | "claude-done"
-  | "attention"
-  | "claude-attention"
+type DotKind = "normal" | "claude-thinking" | "claude-waiting" | "claude-needs-attention";
 
 function getDotKind(pane: TmuxPane): DotKind {
-  const isClaude = pane.process === "claude";
-  const needsAttention = !!pane.needsAttention;
-
-  if (isClaude && needsAttention) return "claude-attention";
-  if (needsAttention) return "attention";
-  if (isClaude) {
-    if (pane.claudeSession?.status === "thinking") return "claude-thinking";
-    return "claude-done";
-  }
-  return "normal";
+  if (pane.process !== "claude") return "normal";
+  if (pane.claudeSession?.status === "thinking") return "claude-thinking";
+  if (pane.claudeSession?.notified) return "claude-needs-attention";
+  return "claude-waiting";
 }
 
 function dotClassName(kind: DotKind): string {
@@ -47,12 +36,10 @@ function dotClassName(kind: DotKind): string {
       return base;
     case "claude-thinking":
       return `${base} dot-claude dot-thinking`;
-    case "claude-done":
+    case "claude-waiting":
       return `${base} dot-claude dot-done`;
-    case "attention":
-      return `${base} dot-attention`;
-    case "claude-attention":
-      return `${base} dot-claude dot-attention`;
+    case "claude-needs-attention":
+      return `${base} dot-claude dot-needs-attention`;
   }
 }
 

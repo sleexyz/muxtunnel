@@ -243,7 +243,40 @@ export function App() {
     }
   }, [currentPane, currentSession, findPane]);
 
-  // Select a pane
+  // Mark Claude session as viewed
+  const handleMarkViewed = useCallback(async (sessionId: string) => {
+    try {
+      await fetch(`/api/claude-sessions/${encodeURIComponent(sessionId)}/viewed`, {
+        method: "POST",
+      });
+    } catch (err) {
+      console.error("Failed to mark session viewed:", err);
+    }
+  }, []);
+
+  // Clear notifications on all visible Claude panes
+  const clearVisibleNotifications = useCallback(() => {
+    if (document.hidden) return;
+    if (currentPane) {
+      const pane = findPane(currentPane);
+      if (pane?.claudeSession?.notified) {
+        handleMarkViewed(pane.claudeSession.sessionId);
+      }
+    } else if (currentSession) {
+      const session = sessions.find((s) => s.name === currentSession);
+      if (session) {
+        for (const w of session.windows) {
+          for (const p of w.panes) {
+            if (p.claudeSession?.notified) {
+              handleMarkViewed(p.claudeSession.sessionId);
+            }
+          }
+        }
+      }
+    }
+  }, [currentPane, currentSession, sessions, findPane, handleMarkViewed]);
+
+  // Select a pane (auto-marks Claude session as viewed)
   const handleSelectPane = useCallback(
     (target: string) => {
       const pane = findPane(target);
@@ -251,8 +284,12 @@ export function App() {
 
       setCurrentPane(target);
       setCurrentSession(pane.sessionName);
+
+      if (pane.claudeSession?.notified) {
+        handleMarkViewed(pane.claudeSession.sessionId);
+      }
     },
-    [findPane]
+    [findPane, handleMarkViewed]
   );
 
   // Select a session (full view)
@@ -306,16 +343,17 @@ export function App() {
     [currentSession, fetchSessions]
   );
 
-  // Mark Claude session as viewed
-  const handleMarkViewed = useCallback(async (sessionId: string) => {
-    try {
-      await fetch(`/api/claude-sessions/${encodeURIComponent(sessionId)}/viewed`, {
-        method: "POST",
-      });
-    } catch (err) {
-      console.error("Failed to mark session viewed:", err);
-    }
-  }, []);
+  // Auto-clear notified when user is viewing (on poll, pane/session change)
+  useEffect(() => {
+    clearVisibleNotifications();
+  }, [clearVisibleNotifications]);
+
+  // When browser tab becomes visible again, clear notified on visible panes
+  useEffect(() => {
+    const handler = () => clearVisibleNotifications();
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [clearVisibleNotifications]);
 
   // Cmd+P command palette (capture phase to bypass xterm.js)
   useEffect(() => {
@@ -346,6 +384,22 @@ export function App() {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
+
+  // Ctrl+1-9 select nth session (capture phase to bypass xterm.js)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key >= "1" && e.key <= "9") {
+        const idx = parseInt(e.key, 10) - 1;
+        if (idx < orderedSessions.length) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleSelectSession(orderedSessions[idx].name);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [orderedSessions, handleSelectSession]);
 
   // Create a new tmux session from command palette
   const handleCreateSession = useCallback(async (name: string, cwd: string) => {

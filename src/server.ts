@@ -5,10 +5,9 @@ import path from "node:path";
 import { execSync, execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
-import { getPaneInfo, isTmuxRunning, killPane, killSession, listSessionsAsync, capturePaneAsync, getSessionDimensionsAsync, createSessionAsync } from "./tmux.js";
+import { getPaneInfo, isTmuxRunning, killPane, killSession, listSessionsAsync, getSessionDimensionsAsync, createSessionAsync } from "./tmux.js";
 
 const execFileAsync = promisify(execFileCb);
-import { detectAttention } from "./attention.js";
 import { createPtySession, PtySession } from "./pty.js";
 import { getActiveSession, markSessionViewed, startWatching as startClaudeWatching, getPaneCwdAsync, isPaneProcessingAsync } from "./claude-sessions.js";
 import { getSettings, getBackgroundImagePath, startSettingsWatching } from "./settings.js";
@@ -53,15 +52,6 @@ async function getSessionsWithAttention() {
     for (const window of session.windows) {
       for (const pane of window.panes) {
         paneJobs.push((async () => {
-          try {
-            const content = await capturePaneAsync(pane.target);
-            const attention = detectAttention(content);
-            (pane as any).needsAttention = attention.needsAttention;
-            (pane as any).attentionReason = attention.reason;
-          } catch {
-            (pane as any).needsAttention = false;
-          }
-
           if (pane.process === "claude") {
             const cwd = await getPaneCwdAsync(pane.target);
             if (cwd) {

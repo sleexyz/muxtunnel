@@ -19,8 +19,6 @@ export interface TmuxPane {
   top: number;
   pid: number;
   process: string;
-  needsAttention?: boolean;
-  attentionReason?: string;
   claudeSession?: ClaudeSession;
 }
 
