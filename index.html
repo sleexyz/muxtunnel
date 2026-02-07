@@ -151,13 +151,13 @@
       .pane-dot.dot-done.dot-selected {
         box-shadow: inset 0 0 0 1.5px #f0a050, 0 0 0 2px #3794ff;
       }
-      /* Claude thinking — involute (solid ↔ ring) */
+      /* Claude thinking — involute (dot ↔ ring, smooth boomerang) */
       .pane-dot.dot-thinking {
-        animation: dot-involute 1.5s ease-in-out infinite;
+        animation: dot-involute 1.6s ease-in-out infinite alternate;
       }
       @keyframes dot-involute {
-        0%, 100% { background: #f0a050; box-shadow: inset 0 0 0 3.5px #f0a050; }
-        50% { background: transparent; box-shadow: inset 0 0 0 1.5px #f0a050; }
+        0% { transform: scale(0.35); background: #f0a050; box-shadow: inset 0 0 0 3.5px #f0a050; }
+        100% { transform: scale(1); background: transparent; box-shadow: inset 0 0 0 1.5px #f0a050; }
       }
 
       /* Needs attention — blink */
