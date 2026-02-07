@@ -118,14 +118,40 @@ export function getSessionsForProject(projectPath: string): ClaudeSession[] {
     }
 
     const indexPath = path.join(projectDir, "sessions-index.json");
-    if (!fs.existsSync(indexPath)) {
-      return [];
+
+    let entries: Array<{ sessionId: string; fullPath: string; summary: string; firstPrompt: string; messageCount: number; modified: string }>;
+
+    if (fs.existsSync(indexPath)) {
+      const index: SessionsIndex = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+      entries = index.entries
+        .filter(entry => entry.projectPath === projectPath)
+        .map(entry => ({
+          sessionId: entry.sessionId,
+          fullPath: entry.fullPath,
+          summary: entry.summary || "",
+          firstPrompt: entry.firstPrompt || "",
+          messageCount: entry.messageCount,
+          modified: entry.modified,
+        }));
+    } else {
+      // Fallback: scan .jsonl files directly when sessions-index.json is missing
+      const files = fs.readdirSync(projectDir).filter(f => f.endsWith(".jsonl"));
+      entries = files.map(f => {
+        const fullPath = path.join(projectDir, f);
+        const sessionId = path.basename(f, ".jsonl");
+        const stats = fs.statSync(fullPath);
+        return {
+          sessionId,
+          fullPath,
+          summary: "",
+          firstPrompt: "",
+          messageCount: 0,
+          modified: stats.mtime.toISOString(),
+        };
+      });
     }
 
-    const index: SessionsIndex = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
-
-    return index.entries
-      .filter(entry => entry.projectPath === projectPath)
+    return entries
       .map(entry => {
         // Check and potentially trigger notification
         checkAndNotify(entry.sessionId, entry.fullPath);
@@ -135,9 +161,9 @@ export function getSessionsForProject(projectPath: string): ClaudeSession[] {
 
         return {
           sessionId: entry.sessionId,
-          projectPath: entry.projectPath,
-          summary: entry.summary || "",
-          firstPrompt: entry.firstPrompt || "",
+          projectPath,
+          summary: entry.summary,
+          firstPrompt: entry.firstPrompt,
           messageCount: entry.messageCount,
           modified: entry.modified,
           status,
