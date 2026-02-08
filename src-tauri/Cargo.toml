@@ -1,0 +1,27 @@
+[package]
+name = "muxtunnel"
+version = "0.1.0"
+description = "Native tmux client with Claude session awareness"
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = ["codegen"] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+portable-pty = "0.8"
+notify = { version = "7", features = ["macos_fsevent"] }
+notify-debouncer-mini = "0.5"
+regex = "1"
+dirs = "5"
+log = "0.4"
+env_logger = "0.11"
+once_cell = "1"
+futures = "0.3"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

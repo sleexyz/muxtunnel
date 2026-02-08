@@ -20,6 +20,14 @@
             pkgs.rustc
             pkgs.cargo
             pkgs.libiconv
+            pkgs.cargo-tauri
+            pkgs.pkg-config
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.darwin.apple_sdk.frameworks.WebKit
+            pkgs.darwin.apple_sdk.frameworks.Security
+            pkgs.darwin.apple_sdk.frameworks.CoreServices
+            pkgs.darwin.apple_sdk.frameworks.AppKit
+            pkgs.darwin.apple_sdk.frameworks.CoreFoundation
           ];
 
           shellHook = ''
