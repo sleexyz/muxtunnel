@@ -133,7 +133,7 @@ export function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Auto-create session via zoxide when navigating to a non-existent session
+  // Auto-create session via resolver when navigating to a non-existent session
   useEffect(() => {
     if (!currentSession) return;
     if (sessions.length === 0) return; // Still loading
@@ -145,9 +145,9 @@ export function App() {
 
     (async () => {
       try {
-        const res = await fetch(`/api/zoxide/${encodeURIComponent(currentSession)}`);
+        const res = await fetch(`/api/projects/resolve/${encodeURIComponent(currentSession)}`);
         if (!res.ok) {
-          setErrorToast(`No zoxide match for "${currentSession}"`);
+          setErrorToast(`No project match for "${currentSession}"`);
           return;
         }
         const { path: cwd, name: resolvedName } = await res.json();
@@ -400,6 +400,23 @@ export function App() {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [orderedSessions, handleSelectSession]);
+
+  // Ctrl+Tab cycle to next session, Ctrl+Shift+Tab cycle to previous
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Tab") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (orderedSessions.length === 0) return;
+        const curIdx = orderedSessions.findIndex((s) => s.name === currentSession);
+        const delta = e.shiftKey ? -1 : 1;
+        const nextIdx = (curIdx + delta + orderedSessions.length) % orderedSessions.length;
+        handleSelectSession(orderedSessions[nextIdx].name);
+      }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [orderedSessions, currentSession, handleSelectSession]);
 
   // Create a new tmux session from command palette
   const handleCreateSession = useCallback(async (name: string, cwd: string) => {

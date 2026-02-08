@@ -1,23 +1,34 @@
 import { useState, useEffect, useRef } from "react";
 
 export interface MuxTunnelSettings {
-  background?: {
-    image?: string;
-    size?: string;
-    opacity?: number;
-    filter?: string;
+  resolver: string;
+  projects: {
+    ignore: string[];
+    maxDepth: number;
   };
-  terminal?: {
-    fontSize?: number;
-    fontFamily?: string;
+  background: {
+    image: string | null;
+    size: string;
+    opacity: number;
+    filter: string | null;
   };
-  window?: {
-    padding?: number;
+  terminal: {
+    fontSize: number;
+    fontFamily: string;
+  };
+  window: {
+    padding: number;
   };
 }
 
 export function useSettings(pollInterval = 5000): MuxTunnelSettings {
-  const [settings, setSettings] = useState<MuxTunnelSettings>({});
+  const [settings, setSettings] = useState<MuxTunnelSettings>({
+    resolver: "muxtunnel.projects",
+    projects: { ignore: [], maxDepth: 3 },
+    background: { image: null, size: "cover", opacity: 0.15, filter: null },
+    terminal: { fontSize: 14, fontFamily: "monospace" },
+    window: { padding: 0 },
+  });
   const versionRef = useRef(-1);
 
   useEffect(() => {

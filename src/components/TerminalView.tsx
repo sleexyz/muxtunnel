@@ -447,7 +447,7 @@ export function TerminalView({
   const bgUrl = getBackgroundImageUrl(settings);
   const bgOpacity = settings.background?.opacity ?? 0.15;
   const bgSize = settings.background?.size ?? "cover";
-  const bgFilter = settings.background?.filter;
+  const bgFilter = settings.background?.filter ?? undefined;
 
   const backgroundDiv = bgUrl ? (
     <div

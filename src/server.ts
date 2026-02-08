@@ -12,6 +12,7 @@ import { createPtySession, PtySession } from "./pty.js";
 import { getActiveSession, markSessionViewed, startWatching as startClaudeWatching, getPaneCwdAsync, isPaneProcessingAsync } from "./claude-sessions.js";
 import { getSettings, getBackgroundImagePath, startSettingsWatching } from "./settings.js";
 import { getSessionOrder, saveSessionOrder, loadSessionOrder } from "./session-order.js";
+import { initResolvers, getResolver } from "./resolver.js";
 
 const PORT = parseInt(process.env.PORT || "3002", 10);
 const HOST = process.env.HOST || "localhost";
@@ -150,6 +151,7 @@ const server = http.createServer((req, res) => {
           return;
         }
         await createSessionAsync(name, cwd);
+        getResolver().recordSelection(cwd);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true }));
       } catch (err) {
@@ -160,18 +162,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (url.pathname === "/api/zoxide" && req.method === "GET") {
-    execFileAsync("zoxide", ["query", "--list", "--score"], { encoding: "utf-8" }).then(({ stdout }) => {
-      const entries = stdout.trim().split("\n").filter(Boolean).map((line) => {
-        const match = line.trim().match(/^\s*([\d.]+)\s+(.+)$/);
-        if (!match) return null;
-        const score = parseFloat(match[1]);
-        const fullPath = match[2];
-        const name = path.basename(fullPath);
-        return { score, path: fullPath, name };
-      }).filter(Boolean);
+  if (url.pathname === "/api/projects" && req.method === "GET") {
+    const query = url.searchParams.get("q") || "";
+    getResolver().resolve(query).then((results) => {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(entries));
+      res.end(JSON.stringify(results));
     }).catch((err) => {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
@@ -179,22 +174,21 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // GET /api/zoxide/:name - resolve a single name via zoxide query
-  const zoxideNameMatch = url.pathname.match(/^\/api\/zoxide\/([^/]+)$/);
-  if (zoxideNameMatch && req.method === "GET") {
-    const name = decodeURIComponent(zoxideNameMatch[1]);
-    execFileAsync("zoxide", ["query", name], { encoding: "utf-8" }).then(({ stdout }) => {
-      const resolvedPath = stdout.trim();
-      if (!resolvedPath) {
+  // GET /api/projects/resolve/:name — resolve a single name to a path
+  const resolveMatch = url.pathname.match(/^\/api\/projects\/resolve\/([^/]+)$/);
+  if (resolveMatch && req.method === "GET") {
+    const name = decodeURIComponent(resolveMatch[1]);
+    getResolver().resolveOne(name).then((result) => {
+      if (!result) {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "No match" }));
         return;
       }
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ path: resolvedPath, name: path.basename(resolvedPath) }));
+      res.end(JSON.stringify(result));
     }).catch(() => {
       res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No zoxide match" }));
+      res.end(JSON.stringify({ error: "Resolution failed" }));
     });
     return;
   }
@@ -549,6 +543,9 @@ startSettingsWatching();
 
 // Load session order
 loadSessionOrder();
+
+// Init project resolvers
+initResolvers(getSettings().settings.resolver);
 
 // Install tmux hook to detect session switches and clean up on exit
 function installTmuxHook() {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-interface ZoxideEntry {
+interface ProjectEntry {
   score: number;
   path: string;
   name: string;
@@ -45,20 +45,20 @@ function displayPath(fullPath: string): string {
 
 export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSession, existingSessions }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
-  const [zoxideEntries, setZoxideEntries] = useState<ZoxideEntry[]>([]);
+  const [projectEntries, setProjectEntries] = useState<ProjectEntry[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Fetch zoxide entries when opened
+  // Fetch project entries when opened
   useEffect(() => {
     if (!isOpen) return;
     setQuery("");
     setActiveIndex(0);
-    fetch("/api/zoxide")
+    fetch("/api/projects")
       .then((res) => res.ok ? res.json() : [])
-      .then((data) => setZoxideEntries(data))
-      .catch(() => setZoxideEntries([]));
+      .then((data) => setProjectEntries(data))
+      .catch(() => setProjectEntries([]));
   }, [isOpen]);
 
   // Auto-focus input
@@ -80,12 +80,12 @@ export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSessi
     items.push({ type: "session", name: s.name, path: s.path });
   }
 
-  // Workspaces section — exclude entries that already have a matching session
-  const filteredWorkspaces = zoxideEntries.filter((entry) => {
+  // Projects section — exclude entries that already have a matching session
+  const filteredProjects = projectEntries.filter((entry) => {
     if (sessionNames.has(entry.name)) return false;
     return entry.name.toLowerCase().includes(lowerQuery) || entry.path.toLowerCase().includes(lowerQuery);
   });
-  for (const entry of filteredWorkspaces) {
+  for (const entry of filteredProjects) {
     items.push({ type: "workspace", name: entry.name, path: entry.path });
   }
 
@@ -163,7 +163,7 @@ export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSessi
           ref={inputRef}
           className="palette-input"
           type="text"
-          placeholder="Search sessions and workspaces..."
+          placeholder="Search sessions and projects..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -178,7 +178,7 @@ export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSessi
                 <div className="palette-section-label">Sessions</div>
               )}
               {i === workspaceSectionStart && (
-                <div className="palette-section-label">Workspaces</div>
+                <div className="palette-section-label">Projects</div>
               )}
               <div
                 className={"palette-item" + (i === effectiveIndex ? " active" : "")}
