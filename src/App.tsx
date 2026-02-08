@@ -4,9 +4,11 @@ import { WorkspaceBar } from "./components/WorkspaceBar";
 import { TerminalView } from "./components/TerminalView";
 import { InputBar } from "./components/InputBar";
 import { CommandPalette } from "./components/CommandPalette";
+import { NotificationToast } from "./components/NotificationToast";
 import type { TmuxSession, TmuxPane } from "./types";
 import { useSettings } from "./hooks/useSettings";
 import { useSessionOrder } from "./hooks/useSessionOrder";
+import { useNotifications } from "./hooks/useNotifications";
 import { mux } from "./mux-client";
 
 // Reserved path segments that should not be treated as session names
@@ -274,6 +276,21 @@ export function App() {
     [findPane, handleMarkViewed]
   );
 
+  // Notification toasts
+  const {
+    notifications,
+    removeNotification,
+    handleToastClick,
+    processSessionUpdate,
+  } = useNotifications(handleSelectPane, handleMarkViewed, currentPane, currentSession);
+
+  // Process poll data for notification transitions
+  useEffect(() => {
+    if (sessions.length > 0) {
+      processSessionUpdate(sessions);
+    }
+  }, [sessions, processSessionUpdate]);
+
   // Select a session (full view)
   const handleSelectSession = useCallback((sessionName: string) => {
     setCurrentPane(null);
@@ -418,6 +435,11 @@ export function App() {
           {errorToast}
         </div>
       )}
+      <NotificationToast
+        notifications={notifications}
+        onDismiss={removeNotification}
+        onClick={handleToastClick}
+      />
       <CommandPalette
         isOpen={paletteOpen}
         onClose={() => setPaletteOpen(false)}

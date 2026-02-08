@@ -451,6 +451,82 @@
         font-size: inherit;
       }
 
+      /* Notification toasts */
+      .toast-stack {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        pointer-events: none;
+      }
+      .toast-item {
+        pointer-events: auto;
+        display: flex;
+        align-items: flex-start;
+        background: #252526;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        padding: 10px 12px;
+        max-width: 320px;
+        min-width: 200px;
+        cursor: pointer;
+        font-family: Menlo, Monaco, 'Courier New', monospace;
+        font-size: 12px;
+        animation: toast-slide-in 0.2s ease-out forwards;
+      }
+      .toast-item:hover {
+        background: #2a2d2e;
+        border-color: rgba(255, 255, 255, 0.15);
+      }
+      .toast-item.toast-exit {
+        animation: toast-fade-out 0.2s ease-in forwards;
+      }
+      @keyframes toast-slide-in {
+        from { transform: translateX(100%); opacity: 0; }
+        to   { transform: translateX(0);    opacity: 1; }
+      }
+      @keyframes toast-fade-out {
+        from { opacity: 1; transform: translateX(0); }
+        to   { opacity: 0; transform: translateX(40px); }
+      }
+      .toast-content {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .toast-title {
+        color: #d4d4d4;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .toast-summary {
+        color: #999;
+        margin-top: 2px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .toast-dismiss {
+        background: none;
+        border: none;
+        color: #666;
+        font-size: 16px;
+        cursor: pointer;
+        padding: 0 0 0 8px;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .toast-dismiss:hover {
+        color: #f48771;
+      }
+
       /* Mobile styles */
       @media (max-width: 768px) {
         #sidebar {

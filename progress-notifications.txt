@@ -1,0 +1,36 @@
+## COMPLETE - 2026-02-08
+
+**What was accomplished:**
+- Created `src/hooks/useNotifications.ts` — state management hook with:
+  - `Map<sessionId, NotificationEntry>` for active toasts
+  - `processSessionUpdate()` diffs poll data via `prevNotifiedRef` to detect `notified: false→true` transitions
+  - 12s auto-dismiss timers per toast (reset on upsert)
+  - Sound chime playback (gated on user interaction for autoplay policy)
+  - Browser Notification API (requests permission on first attempt, uses `tag: sessionId` for coalescing, `onclick` focuses window + navigates)
+  - Skips notifications for the currently-viewed pane
+- Created `src/components/NotificationToast.tsx` — toast UI component:
+  - Fixed stack at top-right, z-index 10000
+  - Stacks vertically (oldest on top), each shows session name + summary (2-line clamp)
+  - Dismiss (X) button with fade-out animation before removal
+  - Click body → navigate to pane + mark viewed + remove toast
+- Generated `public/sounds/notification.wav` — 150ms two-tone chime (C6+E6 with exponential decay)
+- Added toast CSS to `index.html` — slide-in/fade-out keyframes, dark theme, max-width 320px, pointer-events passthrough on gaps
+- Integrated into `App.tsx` — imports, `useNotifications` hook wired after `handleSelectPane`, effect to call `processSessionUpdate` on session changes, `<NotificationToast>` rendered above command palette
+- No server changes needed — existing `notified` + `summary` fields in poll response drive everything
+
+**Prediction review:**
+- Confirmed: "No server changes will be needed" — correct, all data was already in the poll response
+- Confirmed: "The diffing logic will need a ref to persist across renders" — used `prevNotifiedRef` (a `Set<string>`) to track previously-seen notified sessionIds across polls
+- Confirmed: "Browser Notification API permission request will need to be triggered by a user gesture" — handled by requesting permission on first notification attempt rather than on page load
+- Confirmed: "The notification sound will silently fail on first page load before any user interaction" — gated on `userHasInteracted` flag set by click/keydown listeners
+- Not tested: "Toast z-index may conflict with CommandPalette overlay" — CommandPalette uses z-index 100, toasts use z-index 10000, so toasts render above. In practice this is fine since both are in fixed position and don't overlap functionally (palette is centered, toasts are top-right)
+
+**How to predict better:**
+- All predictions were reasonable and confirmed. The z-index prediction was conservative but correct to flag — checking actual z-index values before implementation confirmed no conflict.
+
+**Key insights:**
+- The notification effect runs on `sessions` state changes rather than inside `fetchSessions` callback — this avoids needing the hook to be defined before `fetchSessions` and avoids circular dependency issues with `handleSelectPane`
+- `useNotifications` is placed after `handleSelectPane` and `handleMarkViewed` in the hook ordering since it depends on both callbacks
+- The `prevNotifiedRef` approach (tracking a Set of currently-notified sessionIds) is cleaner than tracking per-pane previous state — just check "was this sessionId in the previous set?"
+- Fade-out animation uses a two-phase approach: set `exiting` state → wait 200ms for CSS animation → then actually remove from Map
+---
