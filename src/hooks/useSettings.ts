@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { mux } from "../mux-client";
 
 export interface MuxTunnelSettings {
   resolver: string;
@@ -36,9 +37,7 @@ export function useSettings(pollInterval = 5000): MuxTunnelSettings {
 
     const fetchSettings = async () => {
       try {
-        const res = await fetch("/api/settings");
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await mux.getSettings();
         if (!active) return;
         if (data.version !== versionRef.current) {
           versionRef.current = data.version;
@@ -68,6 +67,6 @@ export function getBackgroundImageUrl(settings: MuxTunnelSettings): string | nul
     return image;
   }
 
-  // Local file path — served through the API
-  return "/api/settings/background";
+  // Local file path — served through the transport
+  return mux.backgroundImageUrl();
 }

@@ -4,12 +4,13 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { TmuxSession, TmuxPane } from "../types";
 import type { MuxTunnelSettings } from "../hooks/useSettings";
 import { getBackgroundImageUrl } from "../hooks/useSettings";
+import { mux } from "../mux-client";
+import type { PtyStream } from "../transport";
 
 interface TerminalViewProps {
   session: TmuxSession | null;
   currentPane: string | null;
   sessions: TmuxSession[];
-  wsRef: React.MutableRefObject<WebSocket | null>;
   settings: MuxTunnelSettings;
   onRequestRefresh?: () => void;
   onSessionChanged?: (sessionName: string) => void;
@@ -37,7 +38,6 @@ export function TerminalView({
   session,
   currentPane,
   sessions,
-  wsRef,
   settings,
   onRequestRefresh,
   onSessionChanged,
@@ -48,6 +48,7 @@ export function TerminalView({
   const positionerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [cellDimensions, setCellDimensions] = useState<CellDimensions | null>(null);
+  const streamRef = useRef<PtyStream | null>(null);
   const wsGenerationRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerSizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -184,10 +185,10 @@ export function TerminalView({
           cropContainerRef.current.style.height = `${contentRows * dims.height}px`;
         }
 
-        // Send resize over existing WebSocket
-        const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", cols, rows: totalRows }));
+        // Send resize over existing PTY stream
+        const stream = streamRef.current;
+        if (stream) {
+          stream.send({ type: "resize", cols, rows: totalRows });
           // Trigger immediate session refresh after tmux reflows
           if (onRequestRefresh) {
             setTimeout(onRequestRefresh, 200);
@@ -201,7 +202,7 @@ export function TerminalView({
       observer.disconnect();
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [cellDimensions, computeSize, wsRef, onRequestRefresh]);
+  }, [cellDimensions, computeSize, onRequestRefresh]);
 
   // Track whether the terminal container div is in the DOM
   // (it's conditionally rendered — absent when session is null)
@@ -256,11 +257,11 @@ export function TerminalView({
     terminal.open(terminalRef.current);
     terminalInstanceRef.current = terminal;
 
-    // Handle user input — reads wsRef dynamically, no closure capture issue
+    // Handle user input — reads streamRef dynamically
     terminal.onData((data) => {
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "keys", keys: data }));
+      const stream = streamRef.current;
+      if (stream) {
+        stream.send({ type: "keys", keys: data });
       }
     });
 
@@ -321,15 +322,15 @@ export function TerminalView({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSession, fontKey, computeSize, wsRef]);
+  }, [hasSession, fontKey, computeSize]);
 
-  // Effect 2: WebSocket connection (session/pane-dependent)
+  // Effect 2: PTY stream connection (session/pane-dependent)
   // Reuses existing terminal instance — just reset + reconnect.
   useEffect(() => {
     const terminal = terminalInstanceRef.current;
     if (!terminal || !session) return;
 
-    // Invalidate old WS callbacks
+    // Invalidate old stream callbacks
     const generation = ++wsGenerationRef.current;
 
     // Tear down existing connection
@@ -337,9 +338,9 @@ export function TerminalView({
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    if (streamRef.current) {
+      streamRef.current.close();
+      streamRef.current = null;
     }
 
     // Clear buffer so old session content doesn't flash
@@ -354,66 +355,54 @@ export function TerminalView({
     function connect() {
       if (wsGenerationRef.current !== generation || !paneTarget) return;
 
-      const wsCols = currentSize?.cols ?? 80;
-      const wsRows = currentSize?.rows ?? 24;
+      const cols = currentSize?.cols ?? 80;
+      const rows = currentSize?.rows ?? 24;
 
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws?pane=${encodeURIComponent(paneTarget)}&cols=${wsCols}&rows=${wsRows}`;
+      const stream = mux.connectPty(paneTarget, cols, rows);
+      streamRef.current = stream;
 
-      const ws = new WebSocket(wsUrl);
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-
-      ws.onopen = () => {
+      stream.onOpen(() => {
         reconnectDelay = 1000;
         terminalInstanceRef.current?.focus();
         if (onRequestRefresh) {
           setTimeout(onRequestRefresh, 200);
         }
-      };
+      });
 
-      ws.onmessage = (event) => {
+      stream.onData((data) => {
         if (wsGenerationRef.current !== generation) return;
         const term = terminalInstanceRef.current;
         if (!term) return;
+        term.write(new Uint8Array(data));
+      });
 
-        if (event.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(event.data));
-          return;
+      stream.onMessage((msg) => {
+        if (wsGenerationRef.current !== generation) return;
+        if (msg.type === "session-changed" && msg.session) {
+          onSessionChangedRef.current?.(msg.session);
         }
-        if (typeof event.data === "string") {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === "session-changed" && msg.session) {
-              onSessionChangedRef.current?.(msg.session);
-              return;
-            }
-          } catch {
-            term.write(event.data);
-          }
-        }
-      };
+      });
 
-      ws.onclose = (event) => {
+      stream.onClose((code, reason) => {
         if (wsGenerationRef.current !== generation) return;
         const term = terminalInstanceRef.current;
 
-        if (event.code >= 4000 && event.code < 5000) {
-          term?.write(`\r\n\x1b[31m[Connection closed: ${event.reason || "server rejected"}]\x1b[0m\r\n`);
+        if (code >= 4000 && code < 5000) {
+          term?.write(`\r\n\x1b[31m[Connection closed: ${reason || "server rejected"}]\x1b[0m\r\n`);
           return;
         }
 
-        console.warn(`[WS] closed (code: ${event.code}, reason: ${event.reason || "none"})`);
+        console.warn(`[PTY] closed (code: ${code}, reason: ${reason || "none"})`);
         term?.write("\r\n\x1b[33m[Reconnecting...]\x1b[0m");
         reconnectTimerRef.current = setTimeout(() => {
           reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
           connect();
         }, reconnectDelay);
-      };
+      });
 
-      ws.onerror = (err) => {
-        console.error("WebSocket error:", err);
-      };
+      stream.onError((err) => {
+        console.error("PTY stream error:", err);
+      });
     }
 
     connect();
@@ -424,12 +413,12 @@ export function TerminalView({
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
       }
     };
-  }, [session?.name, currentPane, fontKey, wsRef, onRequestRefresh]);
+  }, [session?.name, currentPane, fontKey, onRequestRefresh]);
 
   // Apply crop when pane or cell dimensions change
   useEffect(() => {

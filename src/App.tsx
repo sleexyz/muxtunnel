@@ -7,6 +7,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import type { TmuxSession, TmuxPane } from "./types";
 import { useSettings } from "./hooks/useSettings";
 import { useSessionOrder } from "./hooks/useSessionOrder";
+import { mux } from "./mux-client";
 
 // Reserved path segments that should not be treated as session names
 const RESERVED_PATHS = new Set(["api", "ws", "assets"]);
@@ -85,7 +86,6 @@ export function App() {
   const [sessions, setSessions] = useState<TmuxSession[]>([]);
   const [currentPane, setCurrentPane] = useState<string | null>(initialState.pane);
   const [currentSession, setCurrentSession] = useState<string | null>(initialState.session);
-  const wsRef = useRef<WebSocket | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(() => sessionStorage.getItem("sidebarPinned") === "true");
   const settings = useSettings();
@@ -100,11 +100,8 @@ export function App() {
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
     try {
-      const res = await fetch("/api/sessions");
-      if (res.ok) {
-        const data = await res.json();
-        setSessions(data);
-      }
+      const data = await mux.listSessions();
+      setSessions(data);
     } catch (err) {
       console.error("Failed to fetch sessions:", err);
     }
@@ -145,30 +142,17 @@ export function App() {
 
     (async () => {
       try {
-        const res = await fetch(`/api/projects/resolve/${encodeURIComponent(currentSession)}`);
-        if (!res.ok) {
-          setErrorToast(`No project match for "${currentSession}"`);
-          return;
-        }
-        const { path: cwd, name: resolvedName } = await res.json();
+        const { path: cwd, name: resolvedName } = await mux.resolveProject(currentSession);
         // Redirect to canonical name if the input was a fuzzy/partial match
         const sessionName = resolvedName || currentSession;
         if (sessionName !== currentSession) {
           setCurrentSession(sessionName);
           return;
         }
-        const createRes = await fetch("/api/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: sessionName, cwd }),
-        });
-        if (!createRes.ok) {
-          setErrorToast(`Failed to create session "${sessionName}"`);
-          return;
-        }
+        await mux.createSession(sessionName, cwd);
         await fetchSessions();
       } catch (err) {
-        setErrorToast(`Error creating session: ${err}`);
+        setErrorToast(`No project match for "${currentSession}"`);
       }
     })();
   }, [currentSession, sessions, autoCreateAttempted, fetchSessions]);
@@ -246,9 +230,7 @@ export function App() {
   // Mark Claude session as viewed
   const handleMarkViewed = useCallback(async (sessionId: string) => {
     try {
-      await fetch(`/api/claude-sessions/${encodeURIComponent(sessionId)}/viewed`, {
-        method: "POST",
-      });
+      await mux.markClaudeSessionViewed(sessionId);
     } catch (err) {
       console.error("Failed to mark session viewed:", err);
     }
@@ -302,15 +284,11 @@ export function App() {
   const handleClosePane = useCallback(
     async (target: string) => {
       try {
-        const res = await fetch(`/api/panes/${encodeURIComponent(target)}`, {
-          method: "DELETE",
-        });
-        if (res.ok) {
-          if (currentPane === target) {
-            setCurrentPane(null);
-          }
-          await fetchSessions();
+        await mux.deletePane(target);
+        if (currentPane === target) {
+          setCurrentPane(null);
         }
+        await fetchSessions();
       } catch (err) {
         console.error("Failed to close pane:", err);
       }
@@ -322,20 +300,16 @@ export function App() {
   const handleCloseSession = useCallback(
     async (name: string) => {
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(name)}`, {
-          method: "DELETE",
-        });
-        if (res.ok) {
-          // Optimistically remove from local state BEFORE clearing currentSession.
-          // This prevents the auto-select effect from re-picking the deleted session
-          // from stale data, which would then trigger auto-create to recreate it.
-          setSessions((prev) => prev.filter((s) => s.name !== name));
-          if (currentSession === name) {
-            setCurrentSession(null);
-            setCurrentPane(null);
-          }
-          await fetchSessions();
+        await mux.deleteSession(name);
+        // Optimistically remove from local state BEFORE clearing currentSession.
+        // This prevents the auto-select effect from re-picking the deleted session
+        // from stale data, which would then trigger auto-create to recreate it.
+        setSessions((prev) => prev.filter((s) => s.name !== name));
+        if (currentSession === name) {
+          setCurrentSession(null);
+          setCurrentPane(null);
         }
+        await fetchSessions();
       } catch (err) {
         console.error("Failed to close session:", err);
       }
@@ -421,16 +395,10 @@ export function App() {
   // Create a new tmux session from command palette
   const handleCreateSession = useCallback(async (name: string, cwd: string) => {
     try {
-      const res = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cwd }),
-      });
-      if (res.ok) {
-        await fetchSessions();
-        setCurrentPane(null);
-        setCurrentSession(name);
-      }
+      await mux.createSession(name, cwd);
+      await fetchSessions();
+      setCurrentPane(null);
+      setCurrentSession(name);
     } catch (err) {
       console.error("Failed to create session:", err);
     }
@@ -483,7 +451,6 @@ export function App() {
           session={session}
           currentPane={currentPane}
           sessions={sessions}
-          wsRef={wsRef}
           settings={settings}
           onRequestRefresh={fetchSessions}
           onSessionChanged={(name) => { handleSelectSession(name); fetchSessions(); }}

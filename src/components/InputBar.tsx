@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { mux } from "../mux-client";
 
 interface InputBarProps {
   target: string;
@@ -13,11 +14,7 @@ export function InputBar({ target }: InputBarProps) {
 
     setSending(true);
     try {
-      await fetch(`/api/panes/${encodeURIComponent(target)}/input`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+      await mux.sendInput(target, text);
       setText("");
     } catch (err) {
       console.error("Failed to send input:", err);
@@ -28,9 +25,7 @@ export function InputBar({ target }: InputBarProps) {
 
   const stop = useCallback(async () => {
     try {
-      await fetch(`/api/panes/${encodeURIComponent(target)}/interrupt`, {
-        method: "POST",
-      });
+      await mux.interrupt(target);
     } catch (err) {
       console.error("Failed to send interrupt:", err);
     }

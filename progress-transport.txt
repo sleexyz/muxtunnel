@@ -1,0 +1,69 @@
+## Transport Abstraction Layer — Complete
+
+### New files created
+- `src/transport/types.ts` — MuxTransport + PtyStream interfaces
+- `src/transport/web.ts` — WebTransport: HTTP routing table + WebSocket PtyStream
+- `src/transport/index.ts` — createTransport() factory
+- `src/mux-client.ts` — MuxClient typed wrapper + singleton `mux`
+
+### Files refactored (all fetch/WebSocket calls replaced with mux.*)
+- `src/App.tsx` — 6 fetch calls → mux.*, removed wsRef prop
+- `src/hooks/useSessions.ts` — 3 fetch calls → mux.*
+- `src/hooks/useSettings.ts` — 1 fetch call → mux.getSettings(), background URL → mux.backgroundImageUrl()
+- `src/hooks/useSessionOrder.ts` — 2 fetch calls → mux.*
+- `src/components/TerminalView.tsx` — new WebSocket() → mux.connectPty(), manages PtyStream internally
+- `src/components/CommandPalette.tsx` — 1 fetch call → mux.listProjects()
+- `src/components/InputBar.tsx` — 2 fetch calls → mux.sendInput() + mux.interrupt()
+
+### Files removed (legacy, unused)
+- `src/client.ts` — vanilla JS client, not imported by React app
+- `src/hooks/useWebSocket.ts` — old WebSocket hook, fully superseded by PtyStream
+
+### Key design decisions
+- Singleton `mux` (module-level) instead of React context — simpler, sufficient
+- PtyStream has onOpen/onClose/onError lifecycle callbacks (needed for reconnection logic)
+- WebTransport uses a routing table mapping method strings to HTTP verb + URL pattern
+- TerminalView manages its own streamRef internally instead of receiving wsRef from parent
+- Reconnection logic stays in TerminalView (transport doesn't own retry policy)
+
+### Verification
+- `npx vite build` — passes (612KB bundle)
+- `npx tsc --noEmit` — only pre-existing margin type errors (3), no new errors
+- Zero direct fetch("/api/...") or new WebSocket() calls remain in components/hooks
+- Server-side code untouched
+
+### Prediction outcomes
+- [confirmed] WebTransport routing table covers all 12 endpoints cleanly
+- [confirmed] TerminalView was the hardest refactor (WebSocket lifecycle → PtyStream)
+- [confirmed] PtyStream needed separate onData + onMessage (binary vs JSON dispatch)
+- [confirmed] Singleton MuxClient was simpler than React context
+- [confirmed] No server-side changes needed
+
+---
+
+## COMPLETE - 2026-02-08
+
+**What was accomplished:**
+- Created transport abstraction layer (MuxTransport interface, WebTransport implementation, PtyStream interface)
+- Created MuxClient typed wrapper with singleton export
+- Refactored all 7 frontend files to use mux.* instead of direct fetch/WebSocket
+- Removed 2 legacy files (client.ts, useWebSocket.ts)
+- Build passes, zero new TS errors, zero remaining direct network calls in components
+
+**Prediction review:**
+- Confirmed: All 5 predictions held true
+- The routing table was clean (no edge cases beyond path interpolation)
+- TerminalView was indeed the hardest (needed PtyStream lifecycle: onOpen/onClose/onError added to interface mid-refactor)
+- Binary vs JSON dispatch required separate callbacks as predicted
+- Singleton pattern was sufficient (no React context needed)
+- Server untouched as expected
+
+**How to predict better:**
+- The initial PtyStream interface was missing lifecycle callbacks (onOpen/onClose/onError). Could have predicted this by examining the WebSocket usage in TerminalView *before* designing the interface. Lesson: read all consumers before designing the abstraction.
+- All predictions were correct because they were grounded in reading the actual code first (retrieval-led). Keep doing this.
+
+**Key insights:**
+- TerminalView's wsRef was shared between App.tsx (as a prop) and TerminalView. Converting to internal streamRef simplified the component boundary — TerminalView now owns its own connection lifecycle entirely.
+- The generation counter pattern (wsGenerationRef) translated cleanly to PtyStream — it guards against stale callbacks from previous connections regardless of the underlying transport.
+- WebTransport's routing table pattern (method string → HTTP verb + URL template) is easy to test independently and makes the mapping explicit/auditable.
+---

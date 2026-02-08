@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { TmuxSession } from "../types";
+import { mux } from "../mux-client";
 
 export function useSessionOrder() {
   const [order, setOrder] = useState<string[]>([]);
@@ -9,8 +10,7 @@ export function useSessionOrder() {
   useEffect(() => {
     if (fetchedRef.current) return;
     fetchedRef.current = true;
-    fetch("/api/session-order")
-      .then((res) => (res.ok ? res.json() : []))
+    mux.getSessionOrder()
       .then((data) => {
         if (Array.isArray(data)) setOrder(data);
       })
@@ -46,11 +46,7 @@ export function useSessionOrder() {
 
   const saveOrder = useCallback((names: string[]) => {
     setOrder(names);
-    fetch("/api/session-order", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(names),
-    }).catch(() => {});
+    mux.saveSessionOrder(names).catch(() => {});
   }, []);
 
   const reorder = useCallback(

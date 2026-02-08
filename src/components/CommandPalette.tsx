@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-
-interface ProjectEntry {
-  score: number;
-  path: string;
-  name: string;
-}
+import { mux } from "../mux-client";
+import type { ProjectEntry } from "../mux-client";
 
 interface PaletteItem {
   type: "session" | "workspace";
@@ -55,8 +51,7 @@ export function CommandPalette({ isOpen, onClose, onSelectSession, onCreateSessi
     if (!isOpen) return;
     setQuery("");
     setActiveIndex(0);
-    fetch("/api/projects")
-      .then((res) => res.ok ? res.json() : [])
+    mux.listProjects()
       .then((data) => setProjectEntries(data))
       .catch(() => setProjectEntries([]));
   }, [isOpen]);
