@@ -12,8 +12,10 @@ interface TerminalViewProps {
   currentPane: string | null;
   sessions: TmuxSession[];
   settings: MuxTunnelSettings;
+  backgroundImagePath?: string | null;
   onRequestRefresh?: () => void;
   onSessionChanged?: (sessionName: string) => void;
+  onMarkViewed?: (sessionId: string) => void;
 }
 
 interface CellDimensions {
@@ -39,8 +41,10 @@ export function TerminalView({
   currentPane,
   sessions,
   settings,
+  backgroundImagePath,
   onRequestRefresh,
   onSessionChanged,
+  onMarkViewed,
 }: TerminalViewProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
@@ -106,11 +110,19 @@ export function TerminalView({
         return;
       }
 
+      // Clamp pane dimensions to terminal bounds to prevent
+      // stale poll data from making the crop larger than the terminal
+      const terminal = terminalInstanceRef.current;
+      const maxCols = terminal ? terminal.cols : pane.cols;
+      const maxRows = terminal ? terminal.rows - 1 : pane.rows; // -1 for status bar
+
       const effectiveLeft = pane.left;
       const effectiveTop = pane.top;
+      const clampedCols = Math.min(pane.cols, maxCols - effectiveLeft);
+      const clampedRows = Math.min(pane.rows, maxRows - effectiveTop);
 
-      cropContainerRef.current.style.width = `${pane.cols * dims.width}px`;
-      cropContainerRef.current.style.height = `${pane.rows * dims.height}px`;
+      cropContainerRef.current.style.width = `${clampedCols * dims.width}px`;
+      cropContainerRef.current.style.height = `${clampedRows * dims.height}px`;
       positionerRef.current.style.transform = `translate(${-effectiveLeft * dims.width}px, ${-effectiveTop * dims.height}px)`;
     },
     [findPane]
@@ -119,18 +131,24 @@ export function TerminalView({
   // Show full session view (no cropping)
   const showFullSession = useCallback(
     (dims: CellDimensions) => {
-      if (!session?.dimensions || !cropContainerRef.current || !positionerRef.current) {
+      if (!cropContainerRef.current || !positionerRef.current) {
         return;
       }
 
-      const { width, height } = session.dimensions;
+      // Use the terminal's actual size as the source of truth.
+      // session.dimensions from tmux polling can be stale/mismatched,
+      // causing the crop to exceed the terminal and fail to clip the status bar.
+      const terminal = terminalInstanceRef.current;
+      if (!terminal) return;
 
-      cropContainerRef.current.style.width = `${width * dims.width}px`;
-      // Crop to content area only (excludes tmux status bar)
-      cropContainerRef.current.style.height = `${height * dims.height}px`;
+      const cols = terminal.cols;
+      const contentRows = terminal.rows - 1; // exclude tmux status bar row
+
+      cropContainerRef.current.style.width = `${cols * dims.width}px`;
+      cropContainerRef.current.style.height = `${contentRows * dims.height}px`;
       positionerRef.current.style.transform = "translate(0, 0)";
     },
-    [session]
+    []
   );
 
   // ResizeObserver: track wrapper size and live-resize terminal
@@ -422,6 +440,7 @@ export function TerminalView({
 
   // Apply crop when pane or cell dimensions change
   useEffect(() => {
+    console.log('[CROP] effect running', { cellDimensions, session: session?.name, currentPane, hasTerminal: !!terminalInstanceRef.current });
     if (!cellDimensions || !session) {
       return;
     }
@@ -433,7 +452,7 @@ export function TerminalView({
     }
   }, [currentPane, session, cellDimensions, applyCropForPane, showFullSession]);
 
-  const bgUrl = getBackgroundImageUrl(settings);
+  const bgUrl = getBackgroundImageUrl(settings, backgroundImagePath);
   const bgOpacity = settings.background?.opacity ?? 0.15;
   const bgSize = settings.background?.size ?? "cover";
   const bgFilter = settings.background?.filter ?? undefined;
@@ -479,11 +498,38 @@ export function TerminalView({
     );
   }
 
+  // Panes that need attention in session view (orange glow overlay)
+  const notifiedPanes = !currentPane && session
+    ? session.windows.flatMap((w) => w.panes.filter((p) => p.claudeSession?.notified))
+    : [];
+  if (notifiedPanes.length > 0) {
+    console.log('[ATTENTION] notified panes:', notifiedPanes.map((p) => p.target), 'cellDims:', cellDimensions);
+  }
+  const attentionOverlays = notifiedPanes.length > 0 && cellDimensions
+    ? notifiedPanes.map((p) => (
+        <div
+          key={p.target}
+          className="pane-attention-overlay"
+          style={{
+            position: "absolute",
+            left: p.left * cellDimensions.width,
+            top: p.top * cellDimensions.height,
+            width: p.cols * cellDimensions.width,
+            height: p.rows * cellDimensions.height,
+          }}
+          onClick={() => {
+            if (p.claudeSession) onMarkViewed?.(p.claudeSession.sessionId);
+          }}
+        />
+      ))
+    : null;
+
   const cropContainer = (
-    <div id="crop-container" ref={cropContainerRef}>
+    <div id="crop-container" ref={cropContainerRef} style={{ position: "relative" }}>
       <div id="terminal-positioner" ref={positionerRef}>
         <div id="terminal" ref={terminalRef} />
       </div>
+      {attentionOverlays}
     </div>
   );
 

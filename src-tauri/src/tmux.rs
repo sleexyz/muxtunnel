@@ -242,8 +242,9 @@ pub async fn list_sessions() -> Vec<TmuxSession> {
         }
     }
 
-    // Sort windows and panes
+    // Sort sessions by name (stable order — HashMap iteration is non-deterministic)
     let mut result: Vec<TmuxSession> = sessions.into_values().collect();
+    result.sort_by(|a, b| a.name.cmp(&b.name));
     for session in &mut result {
         session.windows.sort_by_key(|w| w.index);
         for window in &mut session.windows {

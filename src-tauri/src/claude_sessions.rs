@@ -285,12 +285,11 @@ pub async fn start_watching(app_handle: tauri::AppHandle) {
         return;
     }
 
-    // Keep watcher alive by moving it into the task
-    let _watcher = watcher;
-    let _app_handle = app_handle;
-
     // Process file change events
+    // watcher must be moved into the closure to keep it alive
     tokio::task::spawn_blocking(move || {
+        let _watcher = watcher; // prevent drop — keeps file watching active
+        let _app_handle = app_handle;
         for result in rx {
             if let Ok(event) = result {
                 for path in &event.paths {

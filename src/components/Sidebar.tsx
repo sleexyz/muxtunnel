@@ -101,6 +101,7 @@ export function Sidebar({
   };
 
   const handleDotClick = (e: React.MouseEvent, pane: TmuxPane) => {
+    e.preventDefault();
     e.stopPropagation();
     onSelectPane(pane.target);
     if (!pinned) collapseSidebar();

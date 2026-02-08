@@ -90,7 +90,7 @@ export function App() {
   const [currentSession, setCurrentSession] = useState<string | null>(initialState.session);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(() => sessionStorage.getItem("sidebarPinned") === "true");
-  const settings = useSettings();
+  const { settings, backgroundImagePath } = useSettings();
   const { applyOrder, reorder } = useSessionOrder();
 
   const [autoCreateAttempted, setAutoCreateAttempted] = useState<string | null>(null);
@@ -238,7 +238,9 @@ export function App() {
     }
   }, []);
 
-  // Clear notifications on all visible Claude panes
+  // Clear notification on the specific pane being viewed
+  // In session view (currentPane is null), notifications stay visible
+  // as orange glow overlays — user clicks to dismiss.
   const clearVisibleNotifications = useCallback(() => {
     if (document.hidden) return;
     if (currentPane) {
@@ -246,19 +248,8 @@ export function App() {
       if (pane?.claudeSession?.notified) {
         handleMarkViewed(pane.claudeSession.sessionId);
       }
-    } else if (currentSession) {
-      const session = sessions.find((s) => s.name === currentSession);
-      if (session) {
-        for (const w of session.windows) {
-          for (const p of w.panes) {
-            if (p.claudeSession?.notified) {
-              handleMarkViewed(p.claudeSession.sessionId);
-            }
-          }
-        }
-      }
     }
-  }, [currentPane, currentSession, sessions, findPane, handleMarkViewed]);
+  }, [currentPane, findPane, handleMarkViewed]);
 
   // Select a pane (auto-marks Claude session as viewed)
   const handleSelectPane = useCallback(
@@ -474,8 +465,10 @@ export function App() {
           currentPane={currentPane}
           sessions={sessions}
           settings={settings}
+          backgroundImagePath={backgroundImagePath}
           onRequestRefresh={fetchSessions}
           onSessionChanged={(name) => { handleSelectSession(name); fetchSessions(); }}
+          onMarkViewed={handleMarkViewed}
         />
         {currentPane && <InputBar target={currentPane} />}
       </div>
